@@ -9,8 +9,6 @@ This is the backend server for our project. It runs on your computer and handles
 - Saving and retrieving tasks
 - Providing task data for the calendar view
 
-**Zero external libraries required** — uses only standard C++ and POSIX sockets (built into Linux/macOS).
-
 ---
 
 ## How to Set Up & Run
