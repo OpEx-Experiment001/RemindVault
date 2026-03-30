@@ -17,13 +17,13 @@ This is the backend server for our project. It runs on your computer and handles
 
 ### Step 1 — Compile
 ```
-g++ -std=c++17 main.cpp auth.cpp tasks.cpp -o server -lpthread
+ g++ -std=c++17 main.cpp auth.cpp tasks.cpp -o server.exe -lws2_32
 ```
 That's it. Nothing to download.
 
 ### Step 2 — Run
 ```
-./server
+ server.exe
 ```
 You should see:
 ```
