@@ -1,7 +1,5 @@
 #pragma once
-// ============================================================
-// tasks.h — Task function declarations
-// ============================================================
+
 #include <string>
 
 bool addTask(const std::string& userId,
