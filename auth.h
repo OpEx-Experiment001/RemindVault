@@ -1,7 +1,4 @@
 #pragma once
-// ============================================================
-// auth.h — Register & login function declarations
-// ============================================================
 #include <string>
 
 bool registerUser(const std::string& name, int age, const std::string& email,
