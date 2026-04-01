@@ -1,22 +1,3 @@
-// ============================================================
-// main.cpp — HTTP server using Winsock2 (Windows native sockets)
-// No external libraries — pure standard C++ + Winsock2
-//
-// HOW THIS WORKS:
-//   1. We initialise Winsock2 with WSAStartup()
-//   2. We open a TCP socket and bind it to port 8080
-//   3. For each incoming connection we read the HTTP request
-//   4. We parse the method, path, headers, and body manually
-//   5. We call our auth/task functions and send back a response
-//
-// COMPILE (in VS Code terminal):
-//   g++ -std=c++17 main.cpp auth.cpp tasks.cpp -o server.exe -lws2_32
-//
-// RUN:
-//   server.exe
-//   → http://localhost:8080
-// ============================================================
-
 #include "auth.h"
 #include "tasks.h"
 #include "json_utils.h"
@@ -28,42 +9,23 @@
 
 #include <algorithm>
 #include <cstring>
-// NOTE: No <filesystem> needed — we use CreateDirectoryA() from windows.h
-// which is pulled in automatically by <winsock2.h> below.
-
-// ── Winsock2 — Windows socket API ───────────────────────────
-// Must be included BEFORE any other Windows headers
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")   // Auto-link Winsock library
-                                      // (no need to add -lws2_32 manually
-                                      //  when using MSVC; still needed for g++)
 
-// ════════════════════════════════════════════════════════════
-// SOCKET TYPE ALIAS
-// On POSIX:   sockets are plain int file descriptors
-// On Windows: sockets are SOCKET (an unsigned pointer-sized int)
-// ════════════════════════════════════════════════════════════
 using SocketFd = SOCKET;
 static const SocketFd INVALID_SOCK = INVALID_SOCKET;
 
-// ── Winsock uses closesocket(), not close() ──────────────────
 inline void closeSocket(SocketFd fd) { closesocket(fd); }
 
-// ════════════════════════════════════════════════════════════
-// HTTP REQUEST — parsed from raw socket bytes
-// ════════════════════════════════════════════════════════════
 struct HttpRequest {
-    std::string method;   // GET, POST, OPTIONS
-    std::string path;     // /register, /tasks, etc.
-    std::string query;    // everything after '?' e.g. userId=abc
+    std::string method;  
+    std::string path;     
+    std::string query;    
     std::map<std::string, std::string> headers;
     std::string body;
 };
 
-// ════════════════════════════════════════════════════════════
-// HTTP RESPONSE — we build and send this
-// ════════════════════════════════════════════════════════════
 struct HttpResponse {
     int statusCode = 200;
     std::string statusText = "OK";
@@ -100,15 +62,13 @@ struct HttpResponse {
     }
 };
 
-// ════════════════════════════════════════════════════════════
-// PARSE — Read raw HTTP bytes into HttpRequest
-// ════════════════════════════════════════════════════════════
+
 static HttpRequest parseRequest(const std::string& raw) {
     HttpRequest req;
     std::istringstream stream(raw);
     std::string line;
 
-    // ── Request line: METHOD /path?query HTTP/1.1 ──
+  
     if (!std::getline(stream, line)) return req;
     if (!line.empty() && line.back()=='\r') line.pop_back();
     {
@@ -116,7 +76,7 @@ static HttpRequest parseRequest(const std::string& raw) {
         std::string fullPath, ver;
         ls >> req.method >> fullPath >> ver;
 
-        // Split path and query string
+      
         auto qpos = fullPath.find('?');
         if (qpos != std::string::npos) {
             req.path  = fullPath.substr(0, qpos);
@@ -126,7 +86,7 @@ static HttpRequest parseRequest(const std::string& raw) {
         }
     }
 
-    // ── Headers ──
+   
     while (std::getline(stream, line)) {
         if (!line.empty() && line.back()=='\r') line.pop_back();
         if (line.empty()) break; // blank line = end of headers
@@ -134,13 +94,13 @@ static HttpRequest parseRequest(const std::string& raw) {
         if (colon != std::string::npos) {
             std::string key = line.substr(0, colon);
             std::string val = line.substr(colon+1);
-            // Trim leading space from value
+           
             while (!val.empty() && (val[0]==' '||val[0]=='\t')) val.erase(0,1);
             req.headers[key] = val;
         }
     }
 
-    // ── Body (remaining stream) ──
+  
     std::ostringstream bodyStream;
     bodyStream << stream.rdbuf();
     req.body = bodyStream.str();
@@ -148,9 +108,7 @@ static HttpRequest parseRequest(const std::string& raw) {
     return req;
 }
 
-// ════════════════════════════════════════════════════════════
-// QUERY STRING PARSER — "userId=abc&foo=bar" → map
-// ════════════════════════════════════════════════════════════
+
 static std::map<std::string, std::string> parseQuery(const std::string& qs) {
     std::map<std::string, std::string> params;
     std::istringstream ss(qs);
@@ -164,20 +122,14 @@ static std::map<std::string, std::string> parseQuery(const std::string& qs) {
     return params;
 }
 
-// ════════════════════════════════════════════════════════════
-// CORS — Add headers so browser can talk to localhost:8080
-// ════════════════════════════════════════════════════════════
+
 static void addCORS(HttpResponse& res) {
     res.headers["Access-Control-Allow-Origin"]  = "*";
     res.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
     res.headers["Access-Control-Allow-Headers"] = "Content-Type";
 }
 
-// ════════════════════════════════════════════════════════════
-// ROUTE HANDLERS
-// ════════════════════════════════════════════════════════════
 
-// ── POST /register ───────────────────────────────────────────
 static HttpResponse handleRegister(const HttpRequest& req) {
     HttpResponse res;
     addCORS(res);
@@ -213,7 +165,6 @@ static HttpResponse handleRegister(const HttpRequest& req) {
     return res;
 }
 
-// ── POST /login ──────────────────────────────────────────────
 static HttpResponse handleLogin(const HttpRequest& req) {
     HttpResponse res;
     addCORS(res);
@@ -244,7 +195,6 @@ static HttpResponse handleLogin(const HttpRequest& req) {
     return res;
 }
 
-// ── POST /tasks/add ──────────────────────────────────────────
 static HttpResponse handleAddTask(const HttpRequest& req) {
     HttpResponse res;
     addCORS(res);
@@ -280,7 +230,6 @@ static HttpResponse handleAddTask(const HttpRequest& req) {
     return res;
 }
 
-// ── GET /tasks ───────────────────────────────────────────────
 static HttpResponse handleGetTasks(const HttpRequest& req) {
     HttpResponse res;
     addCORS(res);
@@ -297,7 +246,6 @@ static HttpResponse handleGetTasks(const HttpRequest& req) {
     return res;
 }
 
-// ── GET /tasks/calendar ──────────────────────────────────────
 static HttpResponse handleGetCalendar(const HttpRequest& req) {
     HttpResponse res;
     addCORS(res);
@@ -314,42 +262,30 @@ static HttpResponse handleGetCalendar(const HttpRequest& req) {
     return res;
 }
 
-// ════════════════════════════════════════════════════════════
-// WINDOWS THREAD CALLBACK
-// CreateThread() requires a specific function signature:
-//   DWORD WINAPI functionName(LPVOID param)
-// We pass the clientFd as a heap-allocated pointer so it
-// survives across the thread boundary safely.
-// ════════════════════════════════════════════════════════════
-static void handleClient(SocketFd clientFd); // forward declaration
+
+static void handleClient(SocketFd clientFd); 
 
 static DWORD WINAPI clientThreadProc(LPVOID param) {
-    // Recover the socket fd from the heap pointer, then free it
+   
     SocketFd clientFd = *(SocketFd*)param;
     delete (SocketFd*)param;
     handleClient(clientFd);
     return 0;
 }
 
-// ════════════════════════════════════════════════════════════
-// HANDLE ONE CLIENT CONNECTION — runs in its own thread
-// ════════════════════════════════════════════════════════════
 static void handleClient(SocketFd clientFd) {
     std::string rawRequest;
     char buf[4096];
 
-    // Keep reading until we have full headers + full body
     while (true) {
         int bytesRead = recv(clientFd, buf, sizeof(buf) - 1, 0);
-        if (bytesRead <= 0) break;          // connection closed or error
+        if (bytesRead <= 0) break;         
         buf[bytesRead] = '\0';
         rawRequest += std::string(buf, bytesRead);
 
-        // Wait until we've received the blank line ending the headers
         auto headerEnd = rawRequest.find("\r\n\r\n");
         if (headerEnd == std::string::npos) continue;
 
-        // Now check Content-Length so we know if the body is complete
         size_t bodyStart    = headerEnd + 4;
         size_t bodyReceived = rawRequest.size() - bodyStart;
 
@@ -370,7 +306,6 @@ static void handleClient(SocketFd clientFd) {
     HttpRequest  req = parseRequest(rawRequest);
     HttpResponse res;
 
-    // ── Router ──────────────────────────────────────────────
     if (req.method == "OPTIONS") {
         addCORS(res);
         res.setStatus(204);
@@ -397,19 +332,15 @@ static void handleClient(SocketFd clientFd) {
         res.setJSON(JsonObject().addBool("success", false).addStr("message", "Route not found.").build());
     }
 
-    // ── Send response ────────────────────────────────────────
+
     std::string responseStr = res.serialize();
     send(clientFd, responseStr.c_str(), (int)responseStr.size(), 0);
     closeSocket(clientFd);
 }
 
-// ════════════════════════════════════════════════════════════
-// MAIN — Initialise Winsock, create socket, bind, listen, loop
-// ════════════════════════════════════════════════════════════
+
 int main() {
-    // ── Step 1: Initialise Winsock2 ──────────────────────────
-    // REQUIRED on Windows before ANY socket call.
-    // This is the main difference from POSIX — Linux/macOS don't need this.
+   
     WSADATA wsaData;
     int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (wsaResult != 0) {
@@ -417,12 +348,9 @@ int main() {
         return 1;
     }
 
-    // ── Step 2: Create the data directory ────────────────────
-    // CreateDirectoryA() is from windows.h (pulled in by winsock2.h above).
-    // Does nothing if the folder already exists.
     CreateDirectoryA("data", NULL);
 
-    // ── Step 3: Create TCP socket ────────────────────────────
+  
     SocketFd serverFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (serverFd == INVALID_SOCK) {
         std::cerr << "[ERROR] Could not create socket. WSA error: " << WSAGetLastError() << "\n";
@@ -430,13 +358,9 @@ int main() {
         return 1;
     }
 
-    // Allow port reuse — avoids "address already in use" on restart
     int opt = 1;
     setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
-    //                                               ^^^^^^^^^^^^^^
-    // Winsock needs (const char*) cast here, unlike POSIX which uses (void*)
-
-    // ── Step 4: Bind to 0.0.0.0:8080 ────────────────────────
+    
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -450,7 +374,7 @@ int main() {
         return 1;
     }
 
-    // ── Step 5: Start listening ──────────────────────────────
+
     if (listen(serverFd, 32) == SOCKET_ERROR) {
         std::cerr << "[ERROR] Listen failed. WSA error: " << WSAGetLastError() << "\n";
         closeSocket(serverFd);
@@ -465,7 +389,6 @@ int main() {
     std::cout << "  Waiting for requests...\n";
     std::cout << "========================================\n\n";
 
-    // ── Step 6: Accept loop — one thread per connection ──────
     while (true) {
         sockaddr_in clientAddr{};
         int clientLen = sizeof(clientAddr);
@@ -476,23 +399,20 @@ int main() {
             continue;
         }
 
-        // Heap-allocate the fd so the thread can safely read it
-        // after this loop iteration moves on.
         SocketFd* fdPtr = new SocketFd(clientFd);
         HANDLE hThread = CreateThread(
-            NULL,             // default security attributes
-            0,                // default stack size
-            clientThreadProc, // our thread function above
-            fdPtr,            // argument passed to it
-            0,                // start immediately
-            NULL              // we don't need the thread ID
+            NULL,            
+            0,                
+            clientThreadProc, 
+            fdPtr,            
+            0,               
+            NULL              
         );
         if (hThread) {
-            // We don't need to track the thread — close the handle
-            // immediately. The thread keeps running until it returns.
+            
             CloseHandle(hThread);
         } else {
-            // Thread creation failed — clean up and skip this client
+           
             std::cerr << "[WARN] CreateThread failed: " << GetLastError() << "\n";
             delete fdPtr;
             closeSocket(clientFd);
