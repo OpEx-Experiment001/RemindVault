@@ -1,7 +1,3 @@
-// ============================================================
-// tasks.cpp — Task management using manual JSON parsing
-// No external libraries — pure standard C++
-// ============================================================
 
 #include "tasks.h"
 #include "storage.h"
@@ -15,7 +11,6 @@
 
 const std::string TASKS_FILE = "data/tasks.json";
 
-// ── Get today's date as "YYYY-MM-DD" ────────────────────────
 static std::string getCurrentDate() {
     auto now   = std::chrono::system_clock::now();
     std::time_t t  = std::chrono::system_clock::to_time_t(now);
@@ -25,7 +20,7 @@ static std::string getCurrentDate() {
     return oss.str();
 }
 
-// ── Add a new task ───────────────────────────────────────────
+
 bool addTask(const std::string& userId,
             const std::string& title,
             const std::string& description,
@@ -58,7 +53,7 @@ bool addTask(const std::string& userId,
     return true;
 }
 
-// ── Get all tasks for one user as a JSON array string ────────
+
 std::string getTasksByUser(const std::string& userId) {
     std::string raw = readFile(TASKS_FILE);
     std::vector<JsonObj> tasks = parseObjArray(raw);
@@ -71,13 +66,12 @@ std::string getTasksByUser(const std::string& userId) {
     return objArrayToString(result);
 }
 
-// ── Get tasks grouped by date for the calendar view ─────────
-// Returns a JSON object: { "2026-03-29": [...], "2026-04-05": [...] }
+
 std::string getTasksForCalendar(const std::string& userId) {
     std::string raw = readFile(TASKS_FILE);
     std::vector<JsonObj> tasks = parseObjArray(raw);
 
-    // date -> list of raw task JSON strings
+   
     std::map<std::string, std::vector<std::string>> calendar;
 
     for (auto& t : tasks) {
@@ -87,10 +81,10 @@ std::string getTasksForCalendar(const std::string& userId) {
         std::string endDate   = getStr(t, "endDate");
         std::string taskJson  = objToString(t);
 
-        // Add to start date
+       
         calendar[startDate].push_back(taskJson);
 
-        // Add to end date if different, with a "note" field
+       
         if (endDate != startDate) {
             JsonObj copy = t;
             copy["note"] = jStr("Due date");
@@ -98,7 +92,7 @@ std::string getTasksForCalendar(const std::string& userId) {
         }
     }
 
-    // Build the result object manually
+    
     std::string out = "{";
     bool firstDate = true;
     for (auto& kv : calendar) {
