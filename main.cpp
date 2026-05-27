@@ -1,426 +1,518 @@
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  main.cpp — HTTP Server Entry Point & Request Router        ║
+// ║  All heavy lifting is in the modules below.                 ║
+// ╚══════════════════════════════════════════════════════════════╝
+#include "platform.h"
 #include "auth.h"
 #include "tasks.h"
 #include "json_utils.h"
+#include "storage.h"
+#include "sse.h"
+#include "alarm.h"
+#include "filebrowser.h"
+#include "admin.h"
 
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <fstream>
 #include <map>
-
+#include <vector>
 #include <algorithm>
-#include <cstring>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")   // Auto-link Winsock library
 
-using SocketFd = SOCKET;
-static const SocketFd INVALID_SOCK = INVALID_SOCKET;
-
-inline void closeSocket(SocketFd fd) { closesocket(fd); }
-
+// ═══════════════════════════════════════════════════════════════
+//  HTTP Request / Response
+// ═══════════════════════════════════════════════════════════════
 struct HttpRequest {
-    std::string method;  
-    std::string path;     
-    std::string query;    
-    std::map<std::string, std::string> headers;
-    std::string body;
+    std::string method, path, query, body;
+    std::map<std::string,std::string> headers;
 };
 
 struct HttpResponse {
     int statusCode = 200;
     std::string statusText = "OK";
-    std::map<std::string, std::string> headers;
+    std::map<std::string,std::string> headers;
     std::string body;
 
-    void setStatus(int code) {
-        statusCode = code;
-        switch(code) {
-            case 200: statusText="OK";          break;
-            case 201: statusText="Created";     break;
-            case 204: statusText="No Content";  break;
-            case 400: statusText="Bad Request"; break;
-            case 401: statusText="Unauthorized";break;
-            case 409: statusText="Conflict";    break;
-            case 500: statusText="Server Error";break;
-            default:  statusText="OK";
+    void setStatus(int c) {
+        statusCode = c;
+        const char* t = "OK";
+        switch(c) {
+            case 201: t="Created";      break;
+            case 204: t="No Content";   break;
+            case 400: t="Bad Request";  break;
+            case 401: t="Unauthorized"; break;
+            case 404: t="Not Found";    break;
+            case 409: t="Conflict";     break;
+            case 500: t="Server Error"; break;
         }
+        statusText = t;
     }
 
-    void setJSON(const std::string& json) {
-        body = json;
+    void setJSON(const std::string& j) {
+        body = j;
         headers["Content-Type"]   = "application/json";
-        headers["Content-Length"] = std::to_string(json.size());
+        headers["Content-Length"] = std::to_string(j.size());
     }
 
     std::string serialize() const {
-        std::ostringstream out;
-        out << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n";
-        for (auto& h : headers)
-            out << h.first << ": " << h.second << "\r\n";
-        out << "\r\n" << body;
-        return out.str();
+        std::ostringstream o;
+        o << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n";
+        for (auto& h : headers) o << h.first << ": " << h.second << "\r\n";
+        o << "\r\n" << body;
+        return o.str();
     }
 };
 
-
+// ═══════════════════════════════════════════════════════════════
+//  Parsing Helpers
+// ═══════════════════════════════════════════════════════════════
 static HttpRequest parseRequest(const std::string& raw) {
     HttpRequest req;
-    std::istringstream stream(raw);
+    std::istringstream s(raw);
     std::string line;
-
-  
-    if (!std::getline(stream, line)) return req;
+    if (!std::getline(s, line)) return req;
     if (!line.empty() && line.back()=='\r') line.pop_back();
     {
         std::istringstream ls(line);
-        std::string fullPath, ver;
-        ls >> req.method >> fullPath >> ver;
-
-      
-        auto qpos = fullPath.find('?');
-        if (qpos != std::string::npos) {
-            req.path  = fullPath.substr(0, qpos);
-            req.query = fullPath.substr(qpos + 1);
-        } else {
-            req.path = fullPath;
-        }
+        std::string full, ver;
+        ls >> req.method >> full >> ver;
+        auto q = full.find('?');
+        if (q != std::string::npos) { req.path = full.substr(0,q); req.query = full.substr(q+1); }
+        else req.path = full;
     }
-
-   
-    while (std::getline(stream, line)) {
+    while (std::getline(s, line)) {
         if (!line.empty() && line.back()=='\r') line.pop_back();
-        if (line.empty()) break; // blank line = end of headers
-        auto colon = line.find(':');
-        if (colon != std::string::npos) {
-            std::string key = line.substr(0, colon);
-            std::string val = line.substr(colon+1);
-           
-            while (!val.empty() && (val[0]==' '||val[0]=='\t')) val.erase(0,1);
-            req.headers[key] = val;
+        if (line.empty()) break;
+        auto c = line.find(':');
+        if (c != std::string::npos) {
+            std::string v = line.substr(c+1);
+            while (!v.empty() && (v[0]==' '||v[0]=='\t')) v.erase(0,1);
+            req.headers[line.substr(0,c)] = v;
         }
     }
-
-  
-    std::ostringstream bodyStream;
-    bodyStream << stream.rdbuf();
-    req.body = bodyStream.str();
-
+    std::ostringstream b; b << s.rdbuf(); req.body = b.str();
     return req;
 }
 
-
-static std::map<std::string, std::string> parseQuery(const std::string& qs) {
-    std::map<std::string, std::string> params;
-    std::istringstream ss(qs);
-    std::string token;
-    while (std::getline(ss, token, '&')) {
-        auto eq = token.find('=');
-        if (eq != std::string::npos) {
-            params[token.substr(0, eq)] = token.substr(eq + 1);
-        }
+static std::map<std::string,std::string> parseQuery(const std::string& qs) {
+    std::map<std::string,std::string> p;
+    std::istringstream ss(qs); std::string tok;
+    while (std::getline(ss, tok, '&')) {
+        auto eq = tok.find('=');
+        if (eq != std::string::npos) p[tok.substr(0,eq)] = tok.substr(eq+1);
     }
-    return params;
+    return p;
 }
-
 
 static void addCORS(HttpResponse& res) {
     res.headers["Access-Control-Allow-Origin"]  = "*";
-    res.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
-    res.headers["Access-Control-Allow-Headers"] = "Content-Type";
+    res.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, PUT, OPTIONS";
+    res.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Token";
 }
 
+// ─── Admin token helper ─────────────────────────────────────────
+static std::string getAdminToken(const HttpRequest& req) {
+    for (const auto& h : req.headers) {
+        std::string k = h.first;
+        std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+        if (k == "x-admin-token") return h.second;
+    }
+    return "";
+}
+static bool checkAdmin(const HttpRequest& req, HttpResponse& res) {
+    if (!isAdminToken(getAdminToken(req))) {
+        addCORS(res);
+        res.setStatus(401);
+        res.setJSON("{\"success\":false,\"message\":\"Unauthorized. Invalid admin token.\"}");
+        return false;
+    }
+    return true;
+}
 
-static HttpResponse handleRegister(const HttpRequest& req) {
-    HttpResponse res;
-    addCORS(res);
+// ═══════════════════════════════════════════════════════════════
+//  Route Handlers
+// ═══════════════════════════════════════════════════════════════
+static HttpResponse onRegister(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
     try {
-        size_t pos = 0;
-        JsonObj body = parseObject(req.body, pos);
-
-        std::string name       = getStr(body, "name");
-        int         age        = getInt(body, "age");
-        std::string email      = getStr(body, "email");
-        std::string gender     = getStr(body, "gender");
-        std::string profession = getStr(body, "profession");
-        std::string password   = getStr(body, "password");
-
-        if (name.empty() || password.empty()) {
+        size_t pos = 0; JsonObj b = parseObject(req.body, pos);
+        std::string name=getStr(b,"name"), email=getStr(b,"email"),
+            gender=getStr(b,"gender"), prof=getStr(b,"profession"),
+            pass=getStr(b,"password");
+        int age=getInt(b,"age");
+        if (name.empty()||pass.empty()) {
             res.setStatus(400);
-            res.setJSON(JsonObject().addBool("success",false).addStr("message","Please fill all fields correctly.").build());
+            res.setJSON(JsonObject().addBool("success",false).addStr("message","Name and password required.").build());
             return res;
         }
-
-        bool ok = registerUser(name, age, email, gender, profession, password);
-        if (ok) {
+        if (registerUser(name,age,email,gender,prof,pass)) {
             res.setStatus(201);
-            res.setJSON(JsonObject().addBool("success",true).addStr("message","Account created successfully! Please log in.").build());
+            res.setJSON(JsonObject().addBool("success",true).addStr("message","Account created!").build());
         } else {
             res.setStatus(409);
-            res.setJSON(JsonObject().addBool("success",false).addStr("message","This name is already taken. Please choose a different name.").build());
+            res.setJSON(JsonObject().addBool("success",false).addStr("message","Username already taken.").build());
         }
-    } catch (...) {
+    } catch(...) {
         res.setStatus(400);
-        res.setJSON(JsonObject().addBool("success",false).addStr("message","Something went wrong. Please fill all fields correctly.").build());
+        res.setJSON(JsonObject().addBool("success",false).addStr("message","Bad request.").build());
     }
     return res;
 }
 
-static HttpResponse handleLogin(const HttpRequest& req) {
-    HttpResponse res;
-    addCORS(res);
+static HttpResponse onLogin(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
     try {
-        size_t pos = 0;
-        JsonObj body = parseObject(req.body, pos);
-
-        std::string name     = getStr(body, "name");
-        std::string password = getStr(body, "password");
-
-        std::string userId = loginUser(name, password);
-        if (!userId.empty()) {
+        size_t pos=0; JsonObj b=parseObject(req.body,pos);
+        std::string name=getStr(b,"name"), pass=getStr(b,"password");
+        std::string uid=loginUser(name,pass);
+        if (!uid.empty()) {
             res.setStatus(200);
-            res.setJSON(JsonObject()
-                .addBool("success", true)
-                .addStr("message", "Welcome back, " + name + "!")
-                .addStr("userId", userId)
-                .addStr("name", name)
-                .build());
+            res.setJSON(JsonObject().addBool("success",true)
+                .addStr("message","Welcome back, "+name+"!")
+                .addStr("userId",uid).addStr("name",name).build());
         } else {
             res.setStatus(401);
-            res.setJSON(JsonObject().addBool("success",false).addStr("message","Incorrect name or password. Please try again.").build());
+            res.setJSON(JsonObject().addBool("success",false).addStr("message","Incorrect credentials.").build());
         }
-    } catch (...) {
+    } catch(...) {
         res.setStatus(400);
-        res.setJSON(JsonObject().addBool("success",false).addStr("message","Something went wrong. Please try again.").build());
+        res.setJSON(JsonObject().addBool("success",false).addStr("message","Bad request.").build());
     }
     return res;
 }
 
-static HttpResponse handleAddTask(const HttpRequest& req) {
-    HttpResponse res;
-    addCORS(res);
+static HttpResponse onAddTask(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
     try {
-        size_t pos = 0;
-        JsonObj body = parseObject(req.body, pos);
-
-        std::string userId      = getStr(body, "userId");
-        std::string title       = getStr(body, "title");
-        std::string description = getStr(body, "description");
-        std::string image       = getStr(body, "image");
-        std::string startDate   = getStr(body, "startDate");
-        std::string endDate     = getStr(body, "endDate");
-
-        if (userId.empty() || title.empty() || startDate.empty() || endDate.empty()) {
+        size_t pos=0; JsonObj b=parseObject(req.body,pos);
+        std::string uid=getStr(b,"userId"), title=getStr(b,"title"),
+            desc=getStr(b,"description"), img=getStr(b,"image"),
+            sd=getStr(b,"startDate"), ed=getStr(b,"endDate"),
+            freq=getStr(b,"frequency"), atype=getStr(b,"attachmentType"),
+            apath=getStr(b,"attachmentPath"), atime=getStr(b,"alarmTime");
+        if (uid.empty()||title.empty()||sd.empty()||ed.empty()) {
             res.setStatus(400);
-            res.setJSON(JsonObject().addBool("success",false).addStr("message","Please fill all required fields (title, dates, userId).").build());
+            res.setJSON(JsonObject().addBool("success",false).addStr("message","Missing required fields.").build());
             return res;
         }
-
-        bool ok = addTask(userId, title, description, image, startDate, endDate);
+        bool ok=addTask(uid,title,desc,img,sd,ed,freq,atype,apath,atime);
         if (ok) {
             res.setStatus(201);
-            res.setJSON(JsonObject().addBool("success",true).addStr("message","Task added successfully!").build());
+            res.setJSON(JsonObject().addBool("success",true).addStr("message","Task added!").build());
         } else {
             res.setStatus(500);
-            res.setJSON(JsonObject().addBool("success",false).addStr("message","Failed to save the task. Please try again.").build());
+            res.setJSON(JsonObject().addBool("success",false).addStr("message","Save failed.").build());
         }
-    } catch (...) {
+    } catch(...) {
         res.setStatus(400);
-        res.setJSON(JsonObject().addBool("success",false).addStr("message","Please fill all required fields.").build());
+        res.setJSON(JsonObject().addBool("success",false).addStr("message","Bad request.").build());
     }
     return res;
 }
 
-static HttpResponse handleGetTasks(const HttpRequest& req) {
-    HttpResponse res;
-    addCORS(res);
-    auto params = parseQuery(req.query);
-    std::string userId = params["userId"];
-    if (userId.empty()) {
+static HttpResponse onTaskAction(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    auto p=parseQuery(req.query);
+    std::string id=p["id"], action=p["action"];
+    if (id.empty()||action.empty()) {
         res.setStatus(400);
-        res.setJSON(JsonObject().addBool("success",false).addStr("message","Please provide a userId in the URL.").build());
+        res.setJSON(JsonObject().addBool("success",false).addStr("message","Missing id or action.").build());
         return res;
     }
-    std::string tasks = getTasksByUser(userId);
-    res.setStatus(200);
-    res.setJSON("{\"success\":true,\"tasks\":" + tasks + "}");
+    bool ok=handleTaskAction(id,action);
+    res.setStatus(ok?200:404);
+    res.setJSON(JsonObject().addBool("success",ok).build());
     return res;
 }
 
-static HttpResponse handleGetCalendar(const HttpRequest& req) {
-    HttpResponse res;
-    addCORS(res);
-    auto params = parseQuery(req.query);
-    std::string userId = params["userId"];
-    if (userId.empty()) {
-        res.setStatus(400);
-        res.setJSON(JsonObject().addBool("success",false).addStr("message","Please provide a userId in the URL.").build());
-        return res;
+static HttpResponse onGetTasks(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    std::string uid=parseQuery(req.query)["userId"];
+    if (uid.empty()) { res.setStatus(400); res.setJSON("{\"success\":false}"); return res; }
+    res.setJSON("{\"success\":true,\"tasks\":"+getTasksByUser(uid)+"}");
+    return res;
+}
+
+static HttpResponse onGetCalendar(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    std::string uid=parseQuery(req.query)["userId"];
+    if (uid.empty()) { res.setStatus(400); res.setJSON("{\"success\":false}"); return res; }
+    res.setJSON("{\"success\":true,\"calendar\":"+getTasksForCalendar(uid)+"}");
+    return res;
+}
+
+static HttpResponse onBrowse(const HttpRequest&) {
+    HttpResponse res; addCORS(res);
+    std::string path = browseForFile();
+    if (path.empty()) {
+        res.setStatus(204); // No content = user cancelled
+        res.setJSON(JsonObject().addBool("success",false).addStr("path","").build());
+    } else {
+        res.setJSON(JsonObject().addBool("success",true).addStr("path",path).build());
     }
-    std::string cal = getTasksForCalendar(userId);
-    res.setStatus(200);
-    res.setJSON("{\"success\":true,\"calendar\":" + cal + "}");
     return res;
 }
 
-
-static void handleClient(SocketFd clientFd); 
-
-static DWORD WINAPI clientThreadProc(LPVOID param) {
-   
-    SocketFd clientFd = *(SocketFd*)param;
-    delete (SocketFd*)param;
-    handleClient(clientFd);
-    return 0;
+// ═══════════════════════════════════════════════════════════════
+//  Admin Route Handlers
+// ═══════════════════════════════════════════════════════════════
+static HttpResponse onAdminGetUsers(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    res.setJSON("{\"success\":true,\"users\":" + adminGetUsers() + "}");
+    return res;
+}
+static HttpResponse onAdminDeleteUser(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    std::string id = parseQuery(req.query)["id"];
+    if (id.empty()) { res.setStatus(400); res.setJSON("{\"success\":false,\"message\":\"Missing id\"}"); return res; }
+    bool ok = adminDeleteUser(id);
+    res.setStatus(ok ? 200 : 404);
+    res.setJSON(JsonObject().addBool("success",ok).build());
+    return res;
+}
+static HttpResponse onAdminEditUser(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    size_t pos=0; JsonObj b=parseObject(req.body,pos);
+    bool ok = adminEditUser(getStr(b,"id"),getStr(b,"name"),getStr(b,"email"),getStr(b,"profession"));
+    res.setStatus(ok ? 200 : 404);
+    res.setJSON(JsonObject().addBool("success",ok).build());
+    return res;
+}
+static HttpResponse onAdminResetPassword(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    size_t pos=0; JsonObj b=parseObject(req.body,pos);
+    std::string id=getStr(b,"id"), pass=getStr(b,"password");
+    if (id.empty()||pass.empty()) { res.setStatus(400); res.setJSON("{\"success\":false,\"message\":\"Missing id or password\"}"); return res; }
+    bool ok = adminResetPassword(id, pass);
+    res.setStatus(ok ? 200 : 404);
+    res.setJSON(JsonObject().addBool("success",ok).build());
+    return res;
+}
+static HttpResponse onAdminGetTasks(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    res.setJSON("{\"success\":true,\"tasks\":" + adminGetAllTasks() + "}");
+    return res;
+}
+static HttpResponse onAdminDeleteTask(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    std::string id = parseQuery(req.query)["id"];
+    if (id.empty()) { res.setStatus(400); res.setJSON("{\"success\":false,\"message\":\"Missing id\"}"); return res; }
+    bool ok = adminDeleteTask(id);
+    res.setStatus(ok ? 200 : 404);
+    res.setJSON(JsonObject().addBool("success",ok).build());
+    return res;
+}
+static HttpResponse onAdminEditTask(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    size_t pos=0; JsonObj b=parseObject(req.body,pos);
+    bool ok = adminEditTask(getStr(b,"id"),getStr(b,"title"),getStr(b,"description"),
+                            getStr(b,"status"),getStr(b,"endDate"),getStr(b,"alarmTime"));
+    res.setStatus(ok ? 200 : 404);
+    res.setJSON(JsonObject().addBool("success",ok).build());
+    return res;
+}
+static HttpResponse onAdminNuke(const HttpRequest& req) {
+    HttpResponse res; addCORS(res);
+    if (!checkAdmin(req, res)) return res;
+    adminNukeAll();
+    res.setJSON(JsonObject().addBool("success",true).addStr("message","All data wiped.").build());
+    return res;
 }
 
-static void handleClient(SocketFd clientFd) {
-    std::string rawRequest;
-    char buf[4096];
+// ═══════════════════════════════════════════════════════════════
+//  Client Thread
+// ═══════════════════════════════════════════════════════════════
+static void handleClient(SocketFd fd) {
+    std::ofstream flog("client_state.txt", std::ios::app);
+    flog << "handleClient started\n" << std::flush;
 
+    std::string raw; char buf[4096];
     while (true) {
-        int bytesRead = recv(clientFd, buf, sizeof(buf) - 1, 0);
-        if (bytesRead <= 0) break;         
-        buf[bytesRead] = '\0';
-        rawRequest += std::string(buf, bytesRead);
-
-        auto headerEnd = rawRequest.find("\r\n\r\n");
-        if (headerEnd == std::string::npos) continue;
-
-        size_t bodyStart    = headerEnd + 4;
-        size_t bodyReceived = rawRequest.size() - bodyStart;
-
-        size_t clPos = rawRequest.find("Content-Length:");
-        if (clPos == std::string::npos) clPos = rawRequest.find("content-length:");
-        size_t contentLen = 0;
-        if (clPos != std::string::npos && clPos < headerEnd) {
-            size_t valStart = clPos + 15; // skip "Content-Length:"
-            while (valStart < rawRequest.size() && rawRequest[valStart] == ' ') valStart++;
-            try { contentLen = std::stoul(rawRequest.substr(valStart)); } catch (...) {}
+        int n=recv(fd,buf,sizeof(buf)-1,0);
+        flog << "recv returned n=" << n << "\n" << std::flush;
+        if (n<=0) break;
+        buf[n]='\0'; raw+=std::string(buf,n);
+        auto he=raw.find("\r\n\r\n");
+        if (he==std::string::npos) continue;
+        size_t cl=0;
+        auto cp=raw.find("Content-Length:");
+        if (cp==std::string::npos) cp=raw.find("content-length:");
+        if (cp!=std::string::npos && cp<he) {
+            size_t vs=cp+15;
+            while(vs<raw.size()&&raw[vs]==' ')vs++;
+            try{cl=std::stoul(raw.substr(vs));}catch(...){}
         }
-
-        if (bodyReceived >= contentLen) break;
+        flog << "cl=" << cl << ", raw.size()=" << raw.size() << ", he=" << he << "\n" << std::flush;
+        if (raw.size()-he-4>=cl) {
+            flog << "Breaking loop\n" << std::flush;
+            break;
+        }
+    }
+    if (raw.empty()) { 
+        flog << "raw is empty, returning\n" << std::flush;
+        closeSocket(fd); return; 
     }
 
-    if (rawRequest.empty()) { closeSocket(clientFd); return; }
-
-    HttpRequest  req = parseRequest(rawRequest);
+    flog << "Parsing request...\n" << std::flush;
+    HttpRequest  req = parseRequest(raw);
     HttpResponse res;
 
-    if (req.method == "OPTIONS") {
+    if (req.method=="OPTIONS") {
+        addCORS(res); res.setStatus(204); res.headers["Content-Length"]="0";
+    }
+    else if (req.method=="GET" && req.path=="/events") {
+        // SSE: keep connection open
+        addCORS(res);
+        res.setStatus(200);
+        res.headers["Content-Type"]  = "text/event-stream";
+        res.headers["Cache-Control"] = "no-cache";
+        res.headers["Connection"]    = "keep-alive";
+        std::string hdr = res.serialize();
+        send(fd, hdr.c_str(), (int)hdr.size(), 0);
+        sseAddClient(fd);
+        // Block until client disconnects
+        char peek[1];
+        while (recv(fd,peek,1,MSG_PEEK)>0) sleepMs(1000);
+        sseRemoveClient(fd);
+        closeSocket(fd);
+        return;
+    }
+    // ── Global OPTIONS handler for CORS preflight ──
+    else if (req.method=="OPTIONS") {
         addCORS(res);
         res.setStatus(204);
-        res.headers["Content-Length"] = "0";
+        std::string out=res.serialize();
+        send(fd,out.c_str(),(int)out.size(),0);
+        closeSocket(fd);
+        return;
     }
-    else if (req.method == "POST" && req.path == "/register") {
-        res = handleRegister(req);
+    else if (req.method=="POST" && req.path=="/register")  res=onRegister(req);
+    else if (req.method=="POST" && req.path=="/login")     res=onLogin(req);
+    else if (req.method=="POST" && req.path=="/tasks/add") res=onAddTask(req);
+    else if (req.method=="GET"  && req.path=="/tasks")         res=onGetTasks(req);
+    else if (req.method=="GET"  && req.path=="/tasks/calendar") res=onGetCalendar(req);
+    else if (req.method=="GET"  && req.path=="/tasks/action")   res=onTaskAction(req);
+    else if (req.method=="GET"  && req.path=="/tasks/browse")    res=onBrowse(req);
+    // ── Admin routes (require X-Admin-Token header) ──
+    else if (req.path=="/admin/users"    && req.method=="GET")    res=onAdminGetUsers(req);
+    else if (req.path=="/admin/users"    && req.method=="DELETE") res=onAdminDeleteUser(req);
+    else if (req.path=="/admin/users"    && req.method=="PUT")    res=onAdminEditUser(req);
+    else if (req.path=="/admin/password" && req.method=="POST")   res=onAdminResetPassword(req);
+    else if (req.path=="/admin/tasks"    && req.method=="GET")    res=onAdminGetTasks(req);
+    else if (req.path=="/admin/tasks"    && req.method=="DELETE") res=onAdminDeleteTask(req);
+    else if (req.path=="/admin/tasks"    && req.method=="PUT")    res=onAdminEditTask(req);
+    else if (req.path=="/admin/nuke"     && req.method=="POST")   res=onAdminNuke(req);
+    // ── Static HTML pages served from the backend (solves file:// CORS) ──
+    else if (req.method=="GET" && (req.path=="/" || req.path=="/app")) {
+        std::ifstream f("RemindVault_Integrated.html");
+        if (f) {
+            std::ostringstream ss; ss << f.rdbuf();
+            addCORS(res); res.setStatus(200);
+            res.headers["Content-Type"]   = "text/html; charset=utf-8";
+            res.body = ss.str();
+            res.headers["Content-Length"] = std::to_string(res.body.size());
+        } else { addCORS(res); res.setStatus(404); res.body="<h2>RemindVault_Integrated.html not found</h2>"; }
     }
-    else if (req.method == "POST" && req.path == "/login") {
-        res = handleLogin(req);
-    }
-    else if (req.method == "POST" && req.path == "/tasks/add") {
-        res = handleAddTask(req);
-    }
-    else if (req.method == "GET" && req.path == "/tasks/calendar") {
-        res = handleGetCalendar(req);
-    }
-    else if (req.method == "GET" && req.path == "/tasks") {
-        res = handleGetTasks(req);
+    else if (req.method=="GET" && (req.path=="/admin" || req.path=="/admin-panel")) {
+        std::ifstream f("admin.html");
+        if (f) {
+            std::ostringstream ss; ss << f.rdbuf();
+            addCORS(res); res.setStatus(200);
+            res.headers["Content-Type"]   = "text/html; charset=utf-8";
+            res.body = ss.str();
+            res.headers["Content-Length"] = std::to_string(res.body.size());
+        } else { addCORS(res); res.setStatus(404); res.body="<h2>admin.html not found</h2>"; }
     }
     else {
-        addCORS(res);
-        res.setStatus(404);
-        res.setJSON(JsonObject().addBool("success", false).addStr("message", "Route not found.").build());
+        addCORS(res); res.setStatus(404);
+        res.setJSON(JsonObject().addBool("success",false).addStr("message","Route not found.").build());
     }
 
-
-    std::string responseStr = res.serialize();
-    send(clientFd, responseStr.c_str(), (int)responseStr.size(), 0);
-    closeSocket(clientFd);
+    std::string out=res.serialize();
+    send(fd,out.c_str(),(int)out.size(),0);
+    closeSocket(fd);
 }
 
+static THREAD_FN(clientThreadProc) {
+    SocketFd fd=*(SocketFd*)_arg; delete (SocketFd*)_arg;
+    handleClient(fd);
+    THREAD_RETURN;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  main()
+// ═══════════════════════════════════════════════════════════════
+PlatMutex storageMutex;
 
 int main() {
-   
-    WSADATA wsaData;
-    int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (wsaResult != 0) {
-        std::cerr << "[ERROR] WSAStartup failed: " << wsaResult << "\n";
-        return 1;
+    mutexInit(storageMutex);
+    if (!initNetwork()) { std::cerr << "[ERROR] Network init failed.\n"; return 1; }
+    ensureDir("data");
+    sseInit();
+    startAlarmThread();
+
+    SocketFd srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (srv == INVALID_SOCK) {
+        std::cerr << "[ERROR] socket() failed: " << getLastSockErr() << "\n";
+        cleanupNetwork(); return 1;
     }
 
-    CreateDirectoryA("data", NULL);
+#if defined(_WIN32)
+    // CRITICAL FIX: Prevent child processes (like alarms or file browsers) from inheriting the socket.
+    // This stops ghost processes from locking the port if the server is killed.
+    SetHandleInformation((HANDLE)srv, HANDLE_FLAG_INHERIT, 0);
+#endif
 
-  
-    SocketFd serverFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (serverFd == INVALID_SOCK) {
-        std::cerr << "[ERROR] Could not create socket. WSA error: " << WSAGetLastError() << "\n";
-        WSACleanup();
-        return 1;
-    }
+    int opt=1;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 
-    int opt = 1;
-    setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
-    
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port        = htons(8080);
+    addr.sin_port        = htons(8081);
 
-    if (bind(serverFd, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        std::cerr << "[ERROR] Bind failed. Is port 8080 already in use? WSA error: "
-                << WSAGetLastError() << "\n";
-        closeSocket(serverFd);
-        WSACleanup();
-        return 1;
+    if (bind(srv,(sockaddr*)&addr,sizeof(addr))==PLAT_SOCK_ERR) {
+        std::cerr << "[ERROR] bind() failed: " << getLastSockErr() << "\n";
+        closeSocket(srv); cleanupNetwork(); return 1;
+    }
+    if (listen(srv,32)==PLAT_SOCK_ERR) {
+        std::cerr << "[ERROR] listen() failed\n";
+        closeSocket(srv); cleanupNetwork(); return 1;
     }
 
-
-    if (listen(serverFd, 32) == SOCKET_ERROR) {
-        std::cerr << "[ERROR] Listen failed. WSA error: " << WSAGetLastError() << "\n";
-        closeSocket(serverFd);
-        WSACleanup();
-        return 1;
+    std::cout
+        << "\n================================================\n"
+        << "  RemindVault Backend  —  http://localhost:8081\n"
+        << "  Cross-platform | No external dependencies\n"
+        << "================================================\n\n" << std::flush;
+        
+    {
+        std::ofstream f("server_state.txt");
+        f << "Server reached main loop!";
     }
-
-    std::cout << "\n========================================\n";
-    std::cout << "  Backend Server Started!  (Windows)\n";
-    std::cout << "  Running at: http://localhost:8080\n";
-    std::cout << "  No external libraries used.\n";
-    std::cout << "  Waiting for requests...\n";
-    std::cout << "========================================\n\n";
 
     while (true) {
-        sockaddr_in clientAddr{};
-        int clientLen = sizeof(clientAddr);
-
-        SocketFd clientFd = accept(serverFd, (sockaddr*)&clientAddr, &clientLen);
-        if (clientFd == INVALID_SOCK) {
-            std::cerr << "[WARN] accept() failed: " << WSAGetLastError() << "\n";
-            continue;
+        sockaddr_in ca{}; int cl=sizeof(ca);
+        SocketFd cfd=accept(srv,(sockaddr*)&ca,&cl);
+        {
+            std::ofstream f("server_state.txt", std::ios::app);
+            f << "\naccept returned! cfd=" << cfd;
         }
-
-        SocketFd* fdPtr = new SocketFd(clientFd);
-        HANDLE hThread = CreateThread(
-            NULL,            
-            0,                
-            clientThreadProc, 
-            fdPtr,            
-            0,               
-            NULL              
-        );
-        if (hThread) {
-            
-            CloseHandle(hThread);
-        } else {
-           
-            std::cerr << "[WARN] CreateThread failed: " << GetLastError() << "\n";
-            delete fdPtr;
-            closeSocket(clientFd);
-        }
+        if (cfd==INVALID_SOCK) continue;
+        SocketFd* p=new SocketFd(cfd);
+        std::cout << "Accepted connection! Spawning thread...\n" << std::flush;
+        spawnThread((ThreadFn)clientThreadProc, p);
     }
 
-    // ── Cleanup (reached only if the loop above exits) ───────
-    closeSocket(serverFd);
-    WSACleanup();   // Always call this to release Winsock resources
+    closeSocket(srv);
+    cleanupNetwork();
     return 0;
 }
