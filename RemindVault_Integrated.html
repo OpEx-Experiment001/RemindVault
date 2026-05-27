@@ -26,6 +26,15 @@
   --sh-lg:0 12px 40px rgba(0,0,0,.55),0 4px 12px rgba(0,0,0,.35);
   --sh-blue:0 0 0 1px rgba(79,124,255,.3),0 4px 20px rgba(79,124,255,.15);
 }
+/* ── Analog Clock ── */
+.clock-widget{display:flex;flex-direction:column;align-items:center;gap:12px;
+  padding:24px;background:var(--surface2);border:1px solid var(--border2);
+  border-radius:20px;margin-bottom:24px;}
+.clock-face{position:relative;width:140px;height:140px;}
+.clock-face svg{filter:drop-shadow(0 0 12px rgba(79,124,255,.25));}
+.clock-digital{font-family:var(--mono);font-size:1.4rem;font-weight:600;
+  color:var(--t1);letter-spacing:.1em;}
+.clock-date-str{font-size:.72rem;color:var(--t2);letter-spacing:.08em;text-transform:uppercase;}
 html{height:100%}
 body{background:var(--bg);color:var(--t1);font-family:var(--font);min-height:100vh;line-height:1.5;-webkit-font-smoothing:antialiased;}
 body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
@@ -429,6 +438,28 @@ select.form-input option{background:var(--surface2);}
       </div>
     </div>
 
+    <!-- CLOCK WIDGET -->
+    <div class="clock-widget">
+      <div class="clock-face">
+        <svg id="clock-svg" viewBox="0 0 140 140" width="140" height="140">
+          <!-- Outer ring -->
+          <circle cx="70" cy="70" r="66" fill="#111219" stroke="#1E1F2E" stroke-width="2"/>
+          <circle cx="70" cy="70" r="60" fill="none" stroke="rgba(79,124,255,0.15)" stroke-width="1"/>
+          <!-- Hour ticks -->
+          <g id="ticks"></g>
+          <!-- Hands -->
+          <line id="hr-hand"  x1="70" y1="70" x2="70" y2="36" stroke="#F0F0F8" stroke-width="4" stroke-linecap="round"/>
+          <line id="min-hand" x1="70" y1="70" x2="70" y2="22" stroke="#4F7CFF" stroke-width="2.5" stroke-linecap="round"/>
+          <line id="sec-hand" x1="70" y1="76" x2="70" y2="16" stroke="#EF4444" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Centre dot -->
+          <circle cx="70" cy="70" r="4" fill="#4F7CFF"/>
+          <circle cx="70" cy="70" r="2" fill="#F0F0F8"/>
+        </svg>
+      </div>
+      <div class="clock-digital" id="clock-digital">00:00:00</div>
+      <div class="clock-date-str" id="clock-date-str">Monday, 01 Jan 2026</div>
+    </div>
+
     <!-- MODULE 0 — ADD TASK -->
     <div class="module">
       <div class="module-head">
@@ -459,6 +490,45 @@ select.form-input option{background:var(--surface2);}
               <label class="form-label">End / Due Date *</label>
               <input id="task-end" class="form-input" type="date"/>
             </div>
+          </div>
+          <!-- Alarm Time row -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">⏰ Alarm Time (HH:MM)</label>
+              <input id="task-alarm-time" class="form-input" type="time" placeholder="e.g. 09:00"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Frequency</label>
+              <select id="task-frequency" class="form-input">
+                <option value="none">Once (No Recurrence)</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+          </div>
+          <!-- Attachment section -->
+          <div class="form-group">
+            <label class="form-label">Attachment Type</label>
+            <select id="task-attach-type" class="form-input" onchange="onAttachTypeChange()">
+              <option value="none">No Attachment</option>
+              <option value="file">Local File (Browse or Paste Path)</option>
+              <option value="url">Website URL (Paste Link)</option>
+            </select>
+          </div>
+          <div id="attach-file-row" class="form-group" style="display:none">
+            <label class="form-label">File Path</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="task-attach-path" class="form-input" type="text"
+                     placeholder="Paste path, or click Browse →" style="flex:1"/>
+              <button class="btn btn-secondary" style="white-space:nowrap;padding:8px 14px"
+                      onclick="doBrowse()">📁 Browse</button>
+            </div>
+          </div>
+          <div id="attach-url-row" class="form-group" style="display:none">
+            <label class="form-label">Website URL</label>
+            <input id="task-attach-url" class="form-input" type="url"
+                   placeholder="https://example.com"/>
           </div>
           <div class="form-group">
             <label class="form-label">Image (optional)</label>
@@ -587,7 +657,13 @@ select.form-input option{background:var(--surface2);}
 </div><!-- /app -->
 
 <script>
-const API = 'http://localhost:8080';
+const API = 'http://localhost:8081';
+
+function getLocalDateString() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+let lastKnownDate = getLocalDateString();
 
 /* ── SESSION ── */
 let currentUserId   = localStorage.getItem('rv_userId')   || '';
@@ -699,6 +775,10 @@ function doLogout(){
   localStorage.removeItem('rv_userId');
   localStorage.removeItem('rv_userName');
   reminders = [];
+  if (window.eventSource) {
+    window.eventSource.close();
+    window.eventSource = null;
+  }
   document.getElementById('app').style.display         = 'none';
   document.getElementById('auth-screen').style.display = 'flex';
   document.getElementById('login-pass').value = '';
@@ -714,13 +794,29 @@ function enterApp(){
   document.getElementById('nav-username').textContent = currentUserName;
   document.getElementById('nav-avatar').textContent   = initial;
   document.getElementById('nav-avatar').title         = currentUserName;
-  const today = new Date().toISOString().slice(0,10);
+  const today = getLocalDateString();
+  lastKnownDate = today;
   document.getElementById('task-start').value = today;
   document.getElementById('task-end').value   = today;
   loadTasks();
   renderCalendar();
   if('Notification' in window && Notification.permission === 'default')
     Notification.requestPermission();
+    
+  // Setup Server-Sent Events (SSE) for Alarms
+  if (window.eventSource) window.eventSource.close();
+  window.eventSource = new EventSource(`${API}/events`);
+  window.eventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'alarm' || data.type === 'check_pending') {
+        showInteractiveAlarm(data.task);
+      } else if (data.type === 'update') {
+        loadTasks();
+        renderCalendar();
+      }
+    } catch(err){}
+  };
 }
 
 /* ── LOAD TASKS ── */
@@ -784,15 +880,29 @@ function clearTaskForm(){
   document.getElementById('task-image').value = '';
   pendingImageBase64 = '';
   document.getElementById('image-preview').style.display = 'none';
-  const today = new Date().toISOString().slice(0,10);
+  const today = getLocalDateString();
   document.getElementById('task-start').value = today;
   document.getElementById('task-end').value   = today;
+  document.getElementById('task-alarm-time').value = '';
+  document.getElementById('task-frequency').value = 'none';
+  document.getElementById('task-attach-type').value = 'none';
+  document.getElementById('task-attach-path').value = '';
+  document.getElementById('task-attach-url').value  = '';
+  onAttachTypeChange();
 }
 async function doAddTask(){
   const title     = document.getElementById('task-title').value.trim();
   const desc      = document.getElementById('task-desc').value.trim();
   const startDate = document.getElementById('task-start').value;
   const endDate   = document.getElementById('task-end').value;
+  const alarmTime = document.getElementById('task-alarm-time').value || 'none';
+  const frequency = document.getElementById('task-frequency').value;
+  const attachType= document.getElementById('task-attach-type').value;
+  // resolve the actual path/url based on attachment type
+  let attachPath = '';
+  if (attachType === 'file') attachPath = document.getElementById('task-attach-path').value.trim();
+  if (attachType === 'url')  attachPath = document.getElementById('task-attach-url').value.trim();
+
   if(!title || !startDate || !endDate){
     showToast('Missing Fields','Please enter a title and both dates.','alert',3500); return;
   }
@@ -800,9 +910,13 @@ async function doAddTask(){
     showToast('Invalid Dates','End date cannot be before start date.','alert',3500); return;
   }
   try {
-    const res  = await fetch(`${API}/tasks/add`, {
+    const res = await fetch(`${API}/tasks/add`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ userId:currentUserId, title, description:desc, image:pendingImageBase64, startDate, endDate })
+      body: JSON.stringify({
+        userId:currentUserId, title, description:desc, image:pendingImageBase64,
+        startDate, endDate, alarmTime, frequency,
+        attachmentType: attachType, attachmentPath: attachPath
+      })
     });
     const data = await res.json();
     if(data.success){
@@ -813,6 +927,30 @@ async function doAddTask(){
     }
   } catch(e){
     showToast('Backend Unreachable', `Make sure server.exe is running at ${API}`, 'alert', 5000);
+  }
+}
+
+/* ── Attachment Type Toggle ── */
+function onAttachTypeChange() {
+  const t = document.getElementById('task-attach-type').value;
+  document.getElementById('attach-file-row').style.display = t === 'file' ? '' : 'none';
+  document.getElementById('attach-url-row').style.display  = t === 'url'  ? '' : 'none';
+}
+
+/* ── Native File Browse (calls C++ backend) ── */
+async function doBrowse() {
+  try {
+    showToast('Opening File Browser…','A native file picker is opening on your desktop.','success',2500);
+    const res  = await fetch(`${API}/tasks/browse`);
+    const data = await res.json();
+    if (data.success && data.path) {
+      document.getElementById('task-attach-path').value = data.path;
+      showToast('File Selected', data.path.split(/[\\/]/).pop(), 'success', 3000);
+    } else {
+      showToast('No File Selected','You cancelled the picker.','alert',2500);
+    }
+  } catch(e) {
+    showToast('Browse Error','Is the backend server running?','alert',3000);
   }
 }
 
@@ -974,7 +1112,7 @@ async function renderCalendar(){
   const months=['January','February','March','April','May','June',
                 'July','August','September','October','November','December'];
   document.getElementById('cal-title').textContent=`${months[calMonth]} ${calYear}`;
-  const today=new Date().toISOString().slice(0,10);
+  const today=getLocalDateString();
   const firstDay=new Date(calYear,calMonth,1).getDay();
   const daysInMonth=new Date(calYear,calMonth+1,0).getDate();
   let html='';
@@ -1001,38 +1139,43 @@ function calNext(){ calMonth++; if(calMonth>11){calMonth=0;calYear++;} renderCal
 
 /* ── SNOOZE & STATUS ── */
 // FIX 7: use array index in onclick — safe, no string-injection issues
-function snoozeReminder(idx){
+async function snoozeReminder(idx){
   const r=reminders[idx]; if(!r) return;
   if(r.status===STATUS.COMPLETED){showToast('Cannot Snooze','Task is already completed.','info',3000);return;}
   if(r.status===STATUS.MISSED)   {showToast('Cannot Snooze','Task is already missed.','info',3000);return;}
   if(r.snoozeCount>=MAX_SNOOZE){
     r.status=STATUS.MISSED;
+    await fetch(`${API}/tasks/action?id=${encodeURIComponent(r.id)}&action=missed`);
     showToast('Snooze Limit Reached',`"${r.title}" auto-marked as Missed.`,'alert',4000);
     playSound('alert'); renderAll(); return;
   }
   r.snoozeCount++; r.status=STATUS.SNOOZED;
+  await fetch(`${API}/tasks/action?id=${encodeURIComponent(r.id)}&action=snooze`);
   showToast(`Snoozed: ${r.title}`,`Snooze ${r.snoozeCount}/${MAX_SNOOZE}`,'snooze',4000);
   playSound('snooze'); renderAll();
 }
-function markCompleted(idx){
+async function markCompleted(idx){
   const r=reminders[idx]; if(!r) return;
   r.status=STATUS.COMPLETED;
+  await fetch(`${API}/tasks/action?id=${encodeURIComponent(r.id)}&action=completed`);
   showToast('Completed ✓',`"${r.title}" marked as done.`,'success',3000);
   playSound('done'); renderAll();
 }
-function markMissed(idx){
+async function markMissed(idx){
   const r=reminders[idx]; if(!r||r.status===STATUS.COMPLETED) return;
   r.status=STATUS.MISSED;
+  await fetch(`${API}/tasks/action?id=${encodeURIComponent(r.id)}&action=missed`);
   showToast('Marked Missed',`"${r.title}" marked as missed.`,'alert',3000);
   renderAll();
 }
-function autoUpdateStatuses(){
+async function autoUpdateStatuses(){
   const now=new Date(); let n=0;
-  reminders.forEach(r=>{
+  for (const r of reminders) {
     if((r.status===STATUS.PENDING||r.status===STATUS.SNOOZED)&&new Date(r.endDate+'T23:59:59')<now){
       r.status=STATUS.MISSED; n++;
+      await fetch(`${API}/tasks/action?id=${encodeURIComponent(r.id)}&action=missed`);
     }
-  });
+  }
   showToast('Auto-Update Complete',`${n} task(s) marked as Missed.`,n?'alert':'info',3000);
   renderAll();
 }
@@ -1095,7 +1238,112 @@ function renderReminderList(){
 function renderAll(){ renderSummary(); renderReminderList(); }
 
 /* ── INIT ── */
+// Build clock ticks once
+(function initClock() {
+  const ticks = document.getElementById('ticks');
+  if (!ticks) return;
+  for (let i = 0; i < 60; i++) {
+    const angle = (i * 6 * Math.PI) / 180;
+    const isMajor = i % 5 === 0;
+    const r1 = isMajor ? 52 : 56, r2 = 62;
+    const x1 = 70 + r1 * Math.sin(angle), y1 = 70 - r1 * Math.cos(angle);
+    const x2 = 70 + r2 * Math.sin(angle), y2 = 70 - r2 * Math.cos(angle);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+    line.setAttribute('stroke', isMajor ? 'rgba(79,124,255,0.7)' : 'rgba(79,124,255,0.2)');
+    line.setAttribute('stroke-width', isMajor ? '2' : '1');
+    line.setAttribute('stroke-linecap','round');
+    ticks.appendChild(line);
+  }
+  function rotateHand(id, deg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.setAttribute('transform', `rotate(${deg},70,70)`);
+  }
+  function tickClock() {
+    const now = new Date();
+    const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+    const ms = now.getMilliseconds();
+    rotateHand('hr-hand',  (h % 12) * 30 + m * 0.5);
+    rotateHand('min-hand', m * 6 + s * 0.1);
+    rotateHand('sec-hand', s * 6 + ms * 0.006);
+    const pad = n => String(n).padStart(2,'0');
+    document.getElementById('clock-digital').textContent =
+      `${pad(h)}:${pad(m)}:${pad(s)}`;
+    const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    document.getElementById('clock-date-str').textContent =
+      `${days[now.getDay()]}, ${pad(now.getDate())} ${months[now.getMonth()]} ${now.getFullYear()}`;
+      
+    // Auto-update UI on midnight rollover
+    const currentLocal = getLocalDateString();
+    if (currentLocal !== lastKnownDate) {
+      const startEl = document.getElementById('task-start');
+      const endEl   = document.getElementById('task-end');
+      if (startEl && startEl.value === lastKnownDate) startEl.value = currentLocal;
+      if (endEl && endEl.value === lastKnownDate) endEl.value = currentLocal;
+      
+      const realYear = now.getFullYear(), realMonth = now.getMonth();
+      if (calYear === realYear && calMonth === realMonth - 1) { calYear = realYear; calMonth = realMonth; }
+      else if (calYear === realYear - 1 && calMonth === 11 && realMonth === 0) { calYear = realYear; calMonth = realMonth; }
+      
+      lastKnownDate = currentLocal;
+      if (typeof renderCalendar === 'function') renderCalendar();
+    }
+  }
+  tickClock();
+  setInterval(tickClock, 100);
+})();
+
 if(currentUserId && currentUserName){ enterApp(); }
+function showInteractiveAlarm(task) {
+  const container = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast alert'; 
+  t.style.flexDirection = 'column';
+  t.style.gap = '12px';
+  t.innerHTML = `
+    <div style="display:flex;gap:11px;width:100%">
+      <div class="t-bar"></div>
+      <div class="t-icon">⏰</div>
+      <div class="t-content">
+        <div class="t-title">${task.title} (ALARM)</div>
+        <div class="t-body">${task.description || 'Scheduled event triggered.'}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;width:100%;margin-top:4px;">
+      <button class="btn btn-primary" style="flex:1;padding:6px;font-size:0.75rem" onclick="handleAlarmAction('${task.id}', 'open', this.parentElement.parentElement)">Open</button>
+      <button class="btn btn-secondary" style="flex:1;padding:6px;font-size:0.75rem" onclick="handleAlarmAction('${task.id}', 'snooze', this.parentElement.parentElement)">Snooze</button>
+      <button class="btn btn-secondary" style="flex:1;padding:6px;font-size:0.75rem" onclick="handleAlarmAction('${task.id}', 'ignore', this.parentElement.parentElement)">Ignore</button>
+    </div>
+  `;
+  container.appendChild(t);
+  
+  // Play sound
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.5);
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(); osc.stop(audioCtx.currentTime + 0.5);
+  } catch(e) {}
+}
+
+async function handleAlarmAction(taskId, action, toastEl) {
+  toastEl.classList.add('removing');
+  setTimeout(() => toastEl.remove(), 300);
+  try {
+    await fetch(`${API}/tasks/action?id=${taskId}&action=${action}`);
+    loadTasks();
+  } catch(e){}
+}
+
 </script>
 </body>
 </html>
