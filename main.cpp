@@ -19,20 +19,21 @@
 #include <map>
 #include <vector>
 #include <algorithm>
+using namespace std;
 
 // ═══════════════════════════════════════════════════════════════
 //  HTTP Request / Response
 // ═══════════════════════════════════════════════════════════════
 struct HttpRequest {
-    std::string method, path, query, body;
-    std::map<std::string,std::string> headers;
+    string method, path, query, body;
+    map<string,string> headers;
 };
 
 struct HttpResponse {
     int statusCode = 200;
-    std::string statusText = "OK";
-    std::map<std::string,std::string> headers;
-    std::string body;
+    string statusText = "OK";
+    map<string,string> headers;
+    string body;
 
     void setStatus(int c) {
         statusCode = c;
@@ -49,14 +50,14 @@ struct HttpResponse {
         statusText = t;
     }
 
-    void setJSON(const std::string& j) {
+    void setJSON(const string& j) {
         body = j;
         headers["Content-Type"]   = "application/json";
-        headers["Content-Length"] = std::to_string(j.size());
+        headers["Content-Length"] = to_string(j.size());
     }
 
-    std::string serialize() const {
-        std::ostringstream o;
+    string serialize() const {
+        ostringstream o;
         o << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n";
         for (auto& h : headers) o << h.first << ": " << h.second << "\r\n";
         o << "\r\n" << body;
@@ -67,40 +68,40 @@ struct HttpResponse {
 // ═══════════════════════════════════════════════════════════════
 //  Parsing Helpers
 // ═══════════════════════════════════════════════════════════════
-static HttpRequest parseRequest(const std::string& raw) {
+static HttpRequest parseRequest(const string& raw) {
     HttpRequest req;
-    std::istringstream s(raw);
-    std::string line;
-    if (!std::getline(s, line)) return req;
+    istringstream s(raw);
+    string line;
+    if (!getline(s, line)) return req;
     if (!line.empty() && line.back()=='\r') line.pop_back();
     {
-        std::istringstream ls(line);
-        std::string full, ver;
+        istringstream ls(line);
+        string full, ver;
         ls >> req.method >> full >> ver;
         auto q = full.find('?');
-        if (q != std::string::npos) { req.path = full.substr(0,q); req.query = full.substr(q+1); }
+        if (q != string::npos) { req.path = full.substr(0,q); req.query = full.substr(q+1); }
         else req.path = full;
     }
-    while (std::getline(s, line)) {
+    while (getline(s, line)) {
         if (!line.empty() && line.back()=='\r') line.pop_back();
         if (line.empty()) break;
         auto c = line.find(':');
-        if (c != std::string::npos) {
-            std::string v = line.substr(c+1);
+        if (c != string::npos) {
+            string v = line.substr(c+1);
             while (!v.empty() && (v[0]==' '||v[0]=='\t')) v.erase(0,1);
             req.headers[line.substr(0,c)] = v;
         }
     }
-    std::ostringstream b; b << s.rdbuf(); req.body = b.str();
+    ostringstream b; b << s.rdbuf(); req.body = b.str();
     return req;
 }
 
-static std::map<std::string,std::string> parseQuery(const std::string& qs) {
-    std::map<std::string,std::string> p;
-    std::istringstream ss(qs); std::string tok;
-    while (std::getline(ss, tok, '&')) {
+static map<string,string> parseQuery(const string& qs) {
+    map<string,string> p;
+    istringstream ss(qs); string tok;
+    while (getline(ss, tok, '&')) {
         auto eq = tok.find('=');
-        if (eq != std::string::npos) p[tok.substr(0,eq)] = tok.substr(eq+1);
+        if (eq != string::npos) p[tok.substr(0,eq)] = tok.substr(eq+1);
     }
     return p;
 }
@@ -112,10 +113,10 @@ static void addCORS(HttpResponse& res) {
 }
 
 // ─── Admin token helper ─────────────────────────────────────────
-static std::string getAdminToken(const HttpRequest& req) {
+static string getAdminToken(const HttpRequest& req) {
     for (const auto& h : req.headers) {
-        std::string k = h.first;
-        std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+        string k = h.first;
+        transform(k.begin(), k.end(), k.begin(), ::tolower);
         if (k == "x-admin-token") return h.second;
     }
     return "";
@@ -137,7 +138,7 @@ static HttpResponse onRegister(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
     try {
         size_t pos = 0; JsonObj b = parseObject(req.body, pos);
-        std::string name=getStr(b,"name"), email=getStr(b,"email"),
+        string name=getStr(b,"name"), email=getStr(b,"email"),
             gender=getStr(b,"gender"), prof=getStr(b,"profession"),
             pass=getStr(b,"password");
         int age=getInt(b,"age");
@@ -164,8 +165,8 @@ static HttpResponse onLogin(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
     try {
         size_t pos=0; JsonObj b=parseObject(req.body,pos);
-        std::string name=getStr(b,"name"), pass=getStr(b,"password");
-        std::string uid=loginUser(name,pass);
+        string name=getStr(b,"name"), pass=getStr(b,"password");
+        string uid=loginUser(name,pass);
         if (!uid.empty()) {
             res.setStatus(200);
             res.setJSON(JsonObject().addBool("success",true)
@@ -186,7 +187,7 @@ static HttpResponse onAddTask(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
     try {
         size_t pos=0; JsonObj b=parseObject(req.body,pos);
-        std::string uid=getStr(b,"userId"), title=getStr(b,"title"),
+        string uid=getStr(b,"userId"), title=getStr(b,"title"),
             desc=getStr(b,"description"), img=getStr(b,"image"),
             sd=getStr(b,"startDate"), ed=getStr(b,"endDate"),
             freq=getStr(b,"frequency"), atype=getStr(b,"attachmentType"),
@@ -214,7 +215,7 @@ static HttpResponse onAddTask(const HttpRequest& req) {
 static HttpResponse onTaskAction(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
     auto p=parseQuery(req.query);
-    std::string id=p["id"], action=p["action"];
+    string id=p["id"], action=p["action"];
     if (id.empty()||action.empty()) {
         res.setStatus(400);
         res.setJSON(JsonObject().addBool("success",false).addStr("message","Missing id or action.").build());
@@ -228,7 +229,7 @@ static HttpResponse onTaskAction(const HttpRequest& req) {
 
 static HttpResponse onGetTasks(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
-    std::string uid=parseQuery(req.query)["userId"];
+    string uid=parseQuery(req.query)["userId"];
     if (uid.empty()) { res.setStatus(400); res.setJSON("{\"success\":false}"); return res; }
     res.setJSON("{\"success\":true,\"tasks\":"+getTasksByUser(uid)+"}");
     return res;
@@ -236,7 +237,7 @@ static HttpResponse onGetTasks(const HttpRequest& req) {
 
 static HttpResponse onGetCalendar(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
-    std::string uid=parseQuery(req.query)["userId"];
+    string uid=parseQuery(req.query)["userId"];
     if (uid.empty()) { res.setStatus(400); res.setJSON("{\"success\":false}"); return res; }
     res.setJSON("{\"success\":true,\"calendar\":"+getTasksForCalendar(uid)+"}");
     return res;
@@ -244,7 +245,7 @@ static HttpResponse onGetCalendar(const HttpRequest& req) {
 
 static HttpResponse onBrowse(const HttpRequest&) {
     HttpResponse res; addCORS(res);
-    std::string path = browseForFile();
+    string path = browseForFile();
     if (path.empty()) {
         res.setStatus(204); // No content = user cancelled
         res.setJSON(JsonObject().addBool("success",false).addStr("path","").build());
@@ -266,7 +267,7 @@ static HttpResponse onAdminGetUsers(const HttpRequest& req) {
 static HttpResponse onAdminDeleteUser(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
     if (!checkAdmin(req, res)) return res;
-    std::string id = parseQuery(req.query)["id"];
+    string id = parseQuery(req.query)["id"];
     if (id.empty()) { res.setStatus(400); res.setJSON("{\"success\":false,\"message\":\"Missing id\"}"); return res; }
     bool ok = adminDeleteUser(id);
     res.setStatus(ok ? 200 : 404);
@@ -286,7 +287,7 @@ static HttpResponse onAdminResetPassword(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
     if (!checkAdmin(req, res)) return res;
     size_t pos=0; JsonObj b=parseObject(req.body,pos);
-    std::string id=getStr(b,"id"), pass=getStr(b,"password");
+    string id=getStr(b,"id"), pass=getStr(b,"password");
     if (id.empty()||pass.empty()) { res.setStatus(400); res.setJSON("{\"success\":false,\"message\":\"Missing id or password\"}"); return res; }
     bool ok = adminResetPassword(id, pass);
     res.setStatus(ok ? 200 : 404);
@@ -302,7 +303,7 @@ static HttpResponse onAdminGetTasks(const HttpRequest& req) {
 static HttpResponse onAdminDeleteTask(const HttpRequest& req) {
     HttpResponse res; addCORS(res);
     if (!checkAdmin(req, res)) return res;
-    std::string id = parseQuery(req.query)["id"];
+    string id = parseQuery(req.query)["id"];
     if (id.empty()) { res.setStatus(400); res.setJSON("{\"success\":false,\"message\":\"Missing id\"}"); return res; }
     bool ok = adminDeleteTask(id);
     res.setStatus(ok ? 200 : 404);
@@ -331,37 +332,37 @@ static HttpResponse onAdminNuke(const HttpRequest& req) {
 //  Client Thread
 // ═══════════════════════════════════════════════════════════════
 static void handleClient(SocketFd fd) {
-    std::ofstream flog("client_state.txt", std::ios::app);
-    flog << "handleClient started\n" << std::flush;
+    ofstream flog("client_state.txt", ios::app);
+    flog << "handleClient started\n" << flush;
 
-    std::string raw; char buf[4096];
+    string raw; char buf[4096];
     while (true) {
         int n=recv(fd,buf,sizeof(buf)-1,0);
-        flog << "recv returned n=" << n << "\n" << std::flush;
+        flog << "recv returned n=" << n << "\n" << flush;
         if (n<=0) break;
-        buf[n]='\0'; raw+=std::string(buf,n);
+        buf[n]='\0'; raw+=string(buf,n);
         auto he=raw.find("\r\n\r\n");
-        if (he==std::string::npos) continue;
+        if (he==string::npos) continue;
         size_t cl=0;
         auto cp=raw.find("Content-Length:");
-        if (cp==std::string::npos) cp=raw.find("content-length:");
-        if (cp!=std::string::npos && cp<he) {
+        if (cp==string::npos) cp=raw.find("content-length:");
+        if (cp!=string::npos && cp<he) {
             size_t vs=cp+15;
             while(vs<raw.size()&&raw[vs]==' ')vs++;
-            try{cl=std::stoul(raw.substr(vs));}catch(...){}
+            try{cl=stoul(raw.substr(vs));}catch(...){}
         }
-        flog << "cl=" << cl << ", raw.size()=" << raw.size() << ", he=" << he << "\n" << std::flush;
+        flog << "cl=" << cl << ", raw.size()=" << raw.size() << ", he=" << he << "\n" << flush;
         if (raw.size()-he-4>=cl) {
-            flog << "Breaking loop\n" << std::flush;
+            flog << "Breaking loop\n" << flush;
             break;
         }
     }
     if (raw.empty()) { 
-        flog << "raw is empty, returning\n" << std::flush;
+        flog << "raw is empty, returning\n" << flush;
         closeSocket(fd); return; 
     }
 
-    flog << "Parsing request...\n" << std::flush;
+    flog << "Parsing request...\n" << flush;
     HttpRequest  req = parseRequest(raw);
     HttpResponse res;
 
@@ -375,7 +376,7 @@ static void handleClient(SocketFd fd) {
         res.headers["Content-Type"]  = "text/event-stream";
         res.headers["Cache-Control"] = "no-cache";
         res.headers["Connection"]    = "keep-alive";
-        std::string hdr = res.serialize();
+        string hdr = res.serialize();
         send(fd, hdr.c_str(), (int)hdr.size(), 0);
         sseAddClient(fd);
         // Block until client disconnects
@@ -389,7 +390,7 @@ static void handleClient(SocketFd fd) {
     else if (req.method=="OPTIONS") {
         addCORS(res);
         res.setStatus(204);
-        std::string out=res.serialize();
+        string out=res.serialize();
         send(fd,out.c_str(),(int)out.size(),0);
         closeSocket(fd);
         return;
@@ -412,23 +413,23 @@ static void handleClient(SocketFd fd) {
     else if (req.path=="/admin/nuke"     && req.method=="POST")   res=onAdminNuke(req);
     // ── Static HTML pages served from the backend (solves file:// CORS) ──
     else if (req.method=="GET" && (req.path=="/" || req.path=="/app")) {
-        std::ifstream f("RemindVault_Integrated.html");
+        ifstream f("RemindVault_Integrated.html");
         if (f) {
-            std::ostringstream ss; ss << f.rdbuf();
+            ostringstream ss; ss << f.rdbuf();
             addCORS(res); res.setStatus(200);
             res.headers["Content-Type"]   = "text/html; charset=utf-8";
             res.body = ss.str();
-            res.headers["Content-Length"] = std::to_string(res.body.size());
+            res.headers["Content-Length"] = to_string(res.body.size());
         } else { addCORS(res); res.setStatus(404); res.body="<h2>RemindVault_Integrated.html not found</h2>"; }
     }
     else if (req.method=="GET" && (req.path=="/admin" || req.path=="/admin-panel")) {
-        std::ifstream f("admin.html");
+        ifstream f("admin.html");
         if (f) {
-            std::ostringstream ss; ss << f.rdbuf();
+            ostringstream ss; ss << f.rdbuf();
             addCORS(res); res.setStatus(200);
             res.headers["Content-Type"]   = "text/html; charset=utf-8";
             res.body = ss.str();
-            res.headers["Content-Length"] = std::to_string(res.body.size());
+            res.headers["Content-Length"] = to_string(res.body.size());
         } else { addCORS(res); res.setStatus(404); res.body="<h2>admin.html not found</h2>"; }
     }
     else {
@@ -436,7 +437,7 @@ static void handleClient(SocketFd fd) {
         res.setJSON(JsonObject().addBool("success",false).addStr("message","Route not found.").build());
     }
 
-    std::string out=res.serialize();
+    string out=res.serialize();
     send(fd,out.c_str(),(int)out.size(),0);
     closeSocket(fd);
 }
@@ -454,14 +455,14 @@ PlatMutex storageMutex;
 
 int main() {
     mutexInit(storageMutex);
-    if (!initNetwork()) { std::cerr << "[ERROR] Network init failed.\n"; return 1; }
+    if (!initNetwork()) { cerr << "[ERROR] Network init failed.\n"; return 1; }
     ensureDir("data");
     sseInit();
     startAlarmThread();
 
     SocketFd srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (srv == INVALID_SOCK) {
-        std::cerr << "[ERROR] socket() failed: " << getLastSockErr() << "\n";
+        cerr << "[ERROR] socket() failed: " << getLastSockErr() << "\n";
         cleanupNetwork(); return 1;
     }
 
@@ -480,22 +481,22 @@ int main() {
     addr.sin_port        = htons(8081);
 
     if (bind(srv,(sockaddr*)&addr,sizeof(addr))==PLAT_SOCK_ERR) {
-        std::cerr << "[ERROR] bind() failed: " << getLastSockErr() << "\n";
+        cerr << "[ERROR] bind() failed: " << getLastSockErr() << "\n";
         closeSocket(srv); cleanupNetwork(); return 1;
     }
     if (listen(srv,32)==PLAT_SOCK_ERR) {
-        std::cerr << "[ERROR] listen() failed\n";
+        cerr << "[ERROR] listen() failed\n";
         closeSocket(srv); cleanupNetwork(); return 1;
     }
 
-    std::cout
+    cout
         << "\n================================================\n"
         << "  RemindVault Backend  —  http://localhost:8081\n"
         << "  Cross-platform | No external dependencies\n"
-        << "================================================\n\n" << std::flush;
+        << "================================================\n\n" << flush;
         
     {
-        std::ofstream f("server_state.txt");
+        ofstream f("server_state.txt");
         f << "Server reached main loop!";
     }
 
@@ -503,12 +504,12 @@ int main() {
         sockaddr_in ca{}; int cl=sizeof(ca);
         SocketFd cfd=accept(srv,(sockaddr*)&ca,&cl);
         {
-            std::ofstream f("server_state.txt", std::ios::app);
+            ofstream f("server_state.txt", ios::app);
             f << "\naccept returned! cfd=" << cfd;
         }
         if (cfd==INVALID_SOCK) continue;
         SocketFd* p=new SocketFd(cfd);
-        std::cout << "Accepted connection! Spawning thread...\n" << std::flush;
+        cout << "Accepted connection! Spawning thread...\n" << flush;
         spawnThread((ThreadFn)clientThreadProc, p);
     }
 

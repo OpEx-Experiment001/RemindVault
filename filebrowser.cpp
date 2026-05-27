@@ -4,10 +4,11 @@
 #include "filebrowser.h"
 #include "pipeutil.h"
 #include <string>
+using namespace std;
 
-std::string browseForFile() {
+string browseForFile() {
 #if defined(_WIN32)
-    const std::string cmd =
+    const string cmd =
         "powershell -NoProfile -Command \""
         "Add-Type -AssemblyName System.Windows.Forms; "
         "$dlg = New-Object System.Windows.Forms.OpenFileDialog; "
@@ -22,7 +23,7 @@ std::string browseForFile() {
         "'POSIX path of (choose file with prompt \"Select Attachment for RemindVault\")'");
 
 #else
-    std::string path = pipeCapture(
+    string path = pipeCapture(
         "zenity --file-selection --title='Select Attachment for RemindVault' 2>/dev/null");
     if (path.empty())
         path = pipeCapture(

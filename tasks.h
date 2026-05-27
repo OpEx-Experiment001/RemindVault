@@ -1,18 +1,19 @@
 #pragma once
 
 #include <string>
+using namespace std;
 
-bool addTask(const std::string& userId,
-             const std::string& title,
-             const std::string& description,
-             const std::string& imageBase64,
-             const std::string& startDate,
-             const std::string& endDate,
-             const std::string& frequency,
-             const std::string& attachmentType,
-             const std::string& attachmentPath,
-             const std::string& alarmTime);
+bool addTask(const string& userId,
+             const string& title,
+             const string& description,
+             const string& imageBase64,
+             const string& startDate,
+             const string& endDate,
+             const string& frequency,
+             const string& attachmentType,
+             const string& attachmentPath,
+             const string& alarmTime);
 
-std::string getTasksByUser(const std::string& userId);
-std::string getTasksForCalendar(const std::string& userId);
-bool handleTaskAction(const std::string& taskId, const std::string& action);
+string getTasksByUser(const string& userId);
+string getTasksForCalendar(const string& userId);
+bool handleTaskAction(const string& taskId, const string& action);

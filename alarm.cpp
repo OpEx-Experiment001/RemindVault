@@ -20,16 +20,17 @@
 #include <vector>
 #include <set>
 #include <iostream>
+using namespace std;
 
 // ─── Active alarm deduplication ───────────────────────────────
-static std::set<std::string> activeAlarms;
+static set<string> activeAlarms;
 static PlatMutex             activeAlarmsMutex;
 
 // ─── Native popup: returns "open" | "snooze" | "ignore" ───────
-static std::string showNativePopup(const std::string& title,
-                                   const std::string& desc) {
+static string showNativePopup(const string& title,
+                                   const string& desc) {
 #if defined(_WIN32)
-    std::string msg = title + "\n\n" + desc +
+    string msg = title + "\n\n" + desc +
         "\n\n[Yes] Open   [No] Snooze 10 min   [Cancel] Ignore";
     int r = MessageBoxA(NULL, msg.c_str(), "RemindVault  Alarm",
                         MB_YESNOCANCEL | MB_ICONINFORMATION | MB_TOPMOST);
@@ -38,19 +39,19 @@ static std::string showNativePopup(const std::string& title,
     return "ignore";
 
 #elif defined(__APPLE__)
-    std::string script =
+    string script =
         "osascript -e 'button returned of (display alert \"" + title +
         "\" message \"" + desc +
         "\" buttons {\"Ignore\", \"Snooze\", \"Open\"} "
         "default button \"Open\" giving up after 120)'";
-    std::string btn = pipeCapture(script);
+    string btn = pipeCapture(script);
     if (btn == "Open")   return "open";
     if (btn == "Snooze") return "snooze";
     return "ignore";
 
 #else
     // Linux: zenity; extra-button text is printed to stdout, exit 1
-    std::string cmd =
+    string cmd =
         "result=$(zenity --question "
         "--title='RemindVault Alarm' "
         "--text='" + title + "\n" + desc + "' "
@@ -67,25 +68,25 @@ static std::string showNativePopup(const std::string& title,
 
 // ─── Per-alarm thread payload ──────────────────────────────────
 struct AlarmArg {
-    std::string taskId, title, desc, attachPath;
+    string taskId, title, desc, attachPath;
 };
 
 static THREAD_FN(alarmThreadProc) {
     AlarmArg* a = static_cast<AlarmArg*>(_arg);
-    std::string taskId = a->taskId, title = a->title,
+    string taskId = a->taskId, title = a->title,
                 desc   = a->desc,  path  = a->attachPath;
     delete a;
 
-    std::string action = showNativePopup(title, desc);
+    string action = showNativePopup(title, desc);
     handleTaskAction(taskId, action);
 
     if (action == "open" && !path.empty()) {
 #if defined(_WIN32)
-        std::string cmd = "start \"\" \"" + path + "\"";
+        string cmd = "start \"\" \"" + path + "\"";
 #elif defined(__APPLE__)
-        std::string cmd = "open \"" + path + "\"";
+        string cmd = "open \"" + path + "\"";
 #else
-        std::string cmd = "xdg-open \"" + path + "\" &";
+        string cmd = "xdg-open \"" + path + "\" &";
 #endif
         system(cmd.c_str());
     }
@@ -95,7 +96,7 @@ static THREAD_FN(alarmThreadProc) {
 }
 
 static void fireAlarm(const JsonObj& task) {
-    std::string id = getStr(task, "id");
+    string id = getStr(task, "id");
     { PlatLock lock(activeAlarmsMutex);
       if (activeAlarms.count(id)) return;
       activeAlarms.insert(id); }
@@ -105,14 +106,14 @@ static void fireAlarm(const JsonObj& task) {
         getStr(task,"attachmentPath")};
     spawnThread((ThreadFn)alarmThreadProc, a);
     broadcastEvent("{\"type\":\"alarm\",\"id\":\"" + id + "\"}");
-    std::cout << "[Alarm] Triggered: " << getStr(task,"title") << "\n";
+    cout << "[Alarm] Triggered: " << getStr(task,"title") << "\n";
 }
 
 // ─── Check if it's time to fire: date AND alarmTime match ─────
-static bool isAlarmDue(const JsonObj& task, const std::string& today,
-                        const std::string& nowHHMM) {
-    std::string endDate   = getStr(task, "endDate");
-    std::string alarmTime = getStr(task, "alarmTime"); // "HH:MM"
+static bool isAlarmDue(const JsonObj& task, const string& today,
+                        const string& nowHHMM) {
+    string endDate   = getStr(task, "endDate");
+    string alarmTime = getStr(task, "alarmTime"); // "HH:MM"
 
     if (endDate != today) return false;
     // If no alarmTime set, fire any time on due date (once per day)
@@ -127,27 +128,27 @@ static THREAD_FN(recurrenceThreadProc) {
     while (true) {
         sleepMs(30000); // check every 30 seconds
 
-        std::string raw = readFile("data/tasks.json");
+        string raw = readFile("data/tasks.json");
         if (raw == "[]" || raw.empty()) continue;
 
-        std::vector<JsonObj> tasks = parseObjArray(raw);
+        vector<JsonObj> tasks = parseObjArray(raw);
 
-        auto now  = std::chrono::system_clock::now();
-        std::time_t nowT = std::chrono::system_clock::to_time_t(now);
-        std::tm* tmNow = std::localtime(&nowT);
+        auto now  = chrono::system_clock::now();
+        time_t nowT = chrono::system_clock::to_time_t(now);
+        tm* tmNow = localtime(&nowT);
 
         char todayBuf[16], hhmmBuf[8];
-        std::strftime(todayBuf, sizeof(todayBuf), "%Y-%m-%d", tmNow);
-        std::strftime(hhmmBuf,  sizeof(hhmmBuf),  "%H:%M",    tmNow);
-        std::string today(todayBuf), nowHHMM(hhmmBuf);
+        strftime(todayBuf, sizeof(todayBuf), "%Y-%m-%d", tmNow);
+        strftime(hhmmBuf,  sizeof(hhmmBuf),  "%H:%M",    tmNow);
+        string today(todayBuf), nowHHMM(hhmmBuf);
 
         for (auto& task : tasks) {
-            std::string status = getStr(task, "status");
+            string status = getStr(task, "status");
 
             // Snooze expired → re-fire
             if (status == "snoozed") {
                 int snoozeUntil = getInt(task, "snoozeUntil");
-                if (snoozeUntil > 0 && (std::time_t)snoozeUntil <= nowT) {
+                if (snoozeUntil > 0 && (time_t)snoozeUntil <= nowT) {
                     handleTaskAction(getStr(task,"id"), "pending");
                     fireAlarm(task);
                 }
@@ -164,5 +165,5 @@ static THREAD_FN(recurrenceThreadProc) {
 
 void startAlarmThread() {
     spawnThread((ThreadFn)recurrenceThreadProc, nullptr);
-    std::cout << "[Alarm] Recurrence engine started (checks every 30s).\n";
+    cout << "[Alarm] Recurrence engine started (checks every 30s).\n";
 }

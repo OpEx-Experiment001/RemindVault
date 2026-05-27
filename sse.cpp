@@ -3,17 +3,18 @@
 // ╚══════════════════════════════════════════════════════════════╝
 #include "sse.h"
 #include <algorithm>
+using namespace std;
 
-std::vector<SocketFd> sseClients;
+vector<SocketFd> sseClients;
 PlatMutex             sseMutex;
 
 void sseInit() {
     mutexInit(sseMutex);
 }
 
-void broadcastEvent(const std::string& jsonData) {
+void broadcastEvent(const string& jsonData) {
     PlatLock lock(sseMutex);
-    std::string payload = "data: " + jsonData + "\n\n";
+    string payload = "data: " + jsonData + "\n\n";
     for (auto it = sseClients.begin(); it != sseClients.end(); ) {
         int sent = send(*it, payload.c_str(), (int)payload.size(), 0);
         if (sent == PLAT_SOCK_ERR) {
@@ -33,7 +34,7 @@ void sseAddClient(SocketFd fd) {
 void sseRemoveClient(SocketFd fd) {
     PlatLock lock(sseMutex);
     sseClients.erase(
-        std::remove(sseClients.begin(), sseClients.end(), fd),
+        remove(sseClients.begin(), sseClients.end(), fd),
         sseClients.end()
     );
 }

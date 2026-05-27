@@ -5,16 +5,17 @@
 #include "platform.h"
 #include <string>
 #include <vector>
+using namespace std;
 
 // Registered long-lived SSE client sockets
-extern std::vector<SocketFd> sseClients;
+extern vector<SocketFd> sseClients;
 extern PlatMutex             sseMutex;
 
 // Initialize the mutex — call once from main()
 void sseInit();
 
 // Push a JSON data line to all connected SSE clients
-void broadcastEvent(const std::string& jsonData);
+void broadcastEvent(const string& jsonData);
 
 // Register / unregister SSE client sockets
 void sseAddClient(SocketFd fd);

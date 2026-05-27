@@ -10,13 +10,14 @@
 #include <map>
 #include <cstdlib>
 #include "sse.h"
+using namespace std;
 
-const std::string TASKS_FILE = "data/tasks.json";
+const string TASKS_FILE = "data/tasks.json";
 
 // ─── Cross-Platform: Open a file or URL with the default app ───
-static void openAttachment(const std::string& path) {
+static void openAttachment(const string& path) {
     if (path.empty()) return;
-    std::string cmd;
+    string cmd;
 #if defined(_WIN32)
     cmd = "start \"\" \"" + path + "\"";
 #elif defined(__APPLE__)
@@ -24,34 +25,34 @@ static void openAttachment(const std::string& path) {
 #else
     cmd = "xdg-open \"" + path + "\" &";
 #endif
-    std::system(cmd.c_str());
+    system(cmd.c_str());
 }
 
-static std::string getCurrentDate() {
-    auto now  = std::chrono::system_clock::now();
-    std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm* tm   = std::localtime(&t);
-    std::ostringstream oss;
-    oss << std::put_time(tm, "%Y-%m-%d");
+static string getCurrentDate() {
+    auto now  = chrono::system_clock::now();
+    time_t t = chrono::system_clock::to_time_t(now);
+    tm* tm   = localtime(&t);
+    ostringstream oss;
+    oss << put_time(tm, "%Y-%m-%d");
     return oss.str();
 }
 
-bool addTask(const std::string& userId,
-             const std::string& title,
-             const std::string& description,
-             const std::string& imageBase64,
-             const std::string& startDate,
-             const std::string& endDate,
-             const std::string& frequency,
-             const std::string& attachmentType,
-             const std::string& attachmentPath,
-             const std::string& alarmTime) {
+bool addTask(const string& userId,
+             const string& title,
+             const string& description,
+             const string& imageBase64,
+             const string& startDate,
+             const string& endDate,
+             const string& frequency,
+             const string& attachmentType,
+             const string& attachmentPath,
+             const string& alarmTime) {
 
-    std::string raw = readFile(TASKS_FILE);
-    std::vector<JsonObj> tasks = parseObjArray(raw);
+    string raw = readFile(TASKS_FILE);
+    vector<JsonObj> tasks = parseObjArray(raw);
 
-    std::string id = "task_" + std::to_string(
-        std::chrono::high_resolution_clock::now().time_since_epoch().count()
+    string id = "task_" + to_string(
+        chrono::high_resolution_clock::now().time_since_epoch().count()
     );
 
     JsonObj newTask;
@@ -75,30 +76,30 @@ bool addTask(const std::string& userId,
     tasks.push_back(newTask);
     writeFile(TASKS_FILE, objArrayToString(tasks));
 
-    std::cout << "[Task] Added: '" << title << "' for user " << userId << "\n";
+    cout << "[Task] Added: '" << title << "' for user " << userId << "\n";
     broadcastEvent("{\"type\":\"update\"}");
     return true;
 }
 
-std::string getTasksByUser(const std::string& userId) {
-    std::string raw = readFile(TASKS_FILE);
-    std::vector<JsonObj> tasks = parseObjArray(raw);
-    std::vector<JsonObj> result;
+string getTasksByUser(const string& userId) {
+    string raw = readFile(TASKS_FILE);
+    vector<JsonObj> tasks = parseObjArray(raw);
+    vector<JsonObj> result;
     for (auto& t : tasks)
         if (getStr(t, "userId") == userId)
             result.push_back(t);
     return objArrayToString(result);
 }
 
-std::string getTasksForCalendar(const std::string& userId) {
-    std::string raw = readFile(TASKS_FILE);
-    std::vector<JsonObj> tasks = parseObjArray(raw);
-    std::map<std::string, std::vector<std::string>> calendar;
+string getTasksForCalendar(const string& userId) {
+    string raw = readFile(TASKS_FILE);
+    vector<JsonObj> tasks = parseObjArray(raw);
+    map<string, vector<string>> calendar;
 
     for (auto& t : tasks) {
         if (getStr(t, "userId") != userId) continue;
-        std::string startDate = getStr(t, "startDate");
-        std::string endDate   = getStr(t, "endDate");
+        string startDate = getStr(t, "startDate");
+        string endDate   = getStr(t, "endDate");
         calendar[startDate].push_back(objToString(t));
         if (endDate != startDate) {
             JsonObj copy = t;
@@ -107,7 +108,7 @@ std::string getTasksForCalendar(const std::string& userId) {
         }
     }
 
-    std::string out = "{";
+    string out = "{";
     bool firstDate = true;
     for (auto& kv : calendar) {
         if (!firstDate) out += ",";
@@ -123,9 +124,9 @@ std::string getTasksForCalendar(const std::string& userId) {
     return out;
 }
 
-bool handleTaskAction(const std::string& taskId, const std::string& action) {
-    std::string raw = readFile(TASKS_FILE);
-    std::vector<JsonObj> tasks = parseObjArray(raw);
+bool handleTaskAction(const string& taskId, const string& action) {
+    string raw = readFile(TASKS_FILE);
+    vector<JsonObj> tasks = parseObjArray(raw);
     bool found = false;
 
     for (auto& t : tasks) {
@@ -137,9 +138,9 @@ bool handleTaskAction(const std::string& taskId, const std::string& action) {
                 int count = getInt(t, "snoozeCount");
                 if (count < 3) {
                     t["snoozeCount"] = jInt(count + 1);
-                    auto now = std::chrono::system_clock::now();
-                    auto snoozeTime = std::chrono::system_clock::to_time_t(
-                        now + std::chrono::minutes(10));
+                    auto now = chrono::system_clock::now();
+                    auto snoozeTime = chrono::system_clock::to_time_t(
+                        now + chrono::minutes(10));
                     t["snoozeUntil"] = jInt((int)snoozeTime);
                     t["status"]      = jStr("snoozed");
                 } else {

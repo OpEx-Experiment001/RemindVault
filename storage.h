@@ -7,24 +7,25 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+using namespace std;
 
 // The master key for XOR encryption. Simple but effective obfuscation.
-static const std::string STORAGE_KEY = "RemindVault2026!";
+static const string STORAGE_KEY = "RemindVault2026!";
 
 extern PlatMutex storageMutex;
 
-inline std::string readFile(const std::string& path) {
+inline string readFile(const string& path) {
     PlatLock lock(storageMutex);
-    std::ifstream f(path, std::ios::binary);
+    ifstream f(path, ios::binary);
     if (!f.is_open()) return "[]";
-    std::ostringstream ss; ss << f.rdbuf();
-    std::string raw = ss.str();
+    ostringstream ss; ss << f.rdbuf();
+    string raw = ss.str();
     if (raw.empty()) return "[]";
     return decryptData(raw, STORAGE_KEY); // XOR is its own inverse
 }
 
-inline void writeFile(const std::string& path, const std::string& content) {
+inline void writeFile(const string& path, const string& content) {
     PlatLock lock(storageMutex);
-    std::ofstream f(path, std::ios::binary);
+    ofstream f(path, ios::binary);
     f << encryptData(content, STORAGE_KEY);
 }

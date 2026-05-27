@@ -3,18 +3,19 @@
 #include <sstream>
 #include <iomanip>
 #include <cstdint>
+using namespace std;
 
 // Simple XOR encryption for storage
-std::string encryptData(const std::string& data, const std::string& key) {
+string encryptData(const string& data, const string& key) {
     if (key.empty()) return data;
-    std::string out = data;
+    string out = data;
     for (size_t i = 0; i < data.size(); i++) {
         out[i] = data[i] ^ key[i % key.size()];
     }
     return out;
 }
 
-std::string decryptData(const std::string& data, const std::string& key) {
+string decryptData(const string& data, const string& key) {
     return encryptData(data, key); // XOR is symmetric
 }
 
@@ -39,8 +40,8 @@ static const uint32_t k[64] = {
     0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 };
 
-std::string sha256(const std::string& input) {
-    std::vector<uint8_t> data(input.begin(), input.end());
+string sha256(const string& input) {
+    vector<uint8_t> data(input.begin(), input.end());
     uint64_t bitlen = data.size() * 8;
     data.push_back(0x80);
     while ((data.size() * 8) % 512 != 448) data.push_back(0x00);
@@ -73,25 +74,25 @@ std::string sha256(const std::string& input) {
         state[4] += e; state[5] += f; state[6] += g; state[7] += h;
     }
 
-    std::ostringstream oss;
+    ostringstream oss;
     for (int i = 0; i < 8; i++) {
-        oss << std::hex << std::setfill('0') << std::setw(8) << state[i];
+        oss << hex << setfill('0') << setw(8) << state[i];
     }
     return oss.str();
 }
 
 // ─── Custom Password Hashing ───
 
-std::string hashPassword(const std::string& password, const std::string& timestampSalt) {
-    std::string saltedInput = password + "_" + timestampSalt;
-    std::string hash = sha256(saltedInput);
+string hashPassword(const string& password, const string& timestampSalt) {
+    string saltedInput = password + "_" + timestampSalt;
+    string hash = sha256(saltedInput);
     return timestampSalt + "$" + hash;
 }
 
-bool verifyPassword(const std::string& password, const std::string& storedHash) {
+bool verifyPassword(const string& password, const string& storedHash) {
     size_t dollarPos = storedHash.find('$');
-    if (dollarPos == std::string::npos) return false;
-    std::string salt = storedHash.substr(0, dollarPos);
-    std::string computedHash = hashPassword(password, salt);
+    if (dollarPos == string::npos) return false;
+    string salt = storedHash.substr(0, dollarPos);
+    string computedHash = hashPassword(password, salt);
     return computedHash == storedHash;
 }

@@ -1,3 +1,4 @@
+using namespace std;
 #pragma once
 // ╔══════════════════════════════════════════════════════════════╗
 // ║  platform.h — Cross-Platform OS Abstractions                ║

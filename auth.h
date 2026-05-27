@@ -1,8 +1,9 @@
 #pragma once
 #include <string>
+using namespace std;
 
-bool registerUser(const std::string& name, int age, const std::string& email,
-                const std::string& gender, const std::string& profession,
-                const std::string& password);
+bool registerUser(const string& name, int age, const string& email,
+                const string& gender, const string& profession,
+                const string& password);
 
-std::string loginUser(const std::string& name, const std::string& password);
+string loginUser(const string& name, const string& password);

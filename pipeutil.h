@@ -4,6 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════╝
 #include <cstdio>
 #include <string>
+using namespace std;
 
 // MinGW on Windows names them _popen/_pclose but may not declare them
 // even with <cstdio>. We forward-declare them here when needed.
@@ -15,8 +16,8 @@ extern "C" {
 #endif
 
 // Unified run-command-capture-output helper
-inline std::string pipeCapture(const std::string& cmd) {
-    std::string out;
+inline string pipeCapture(const string& cmd) {
+    string out;
 #ifdef _WIN32
     FILE* f = _popen(cmd.c_str(), "r");
 #else

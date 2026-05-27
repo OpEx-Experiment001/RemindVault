@@ -1,14 +1,15 @@
 #pragma once
 
 #include <string>
+using namespace std;
 
 // Custom SHA-256 implementation
-std::string sha256(const std::string& input);
+string sha256(const string& input);
 
 // Password hashing using timestamp salting
-std::string hashPassword(const std::string& password, const std::string& timestampSalt);
-bool verifyPassword(const std::string& password, const std::string& storedHash);
+string hashPassword(const string& password, const string& timestampSalt);
+bool verifyPassword(const string& password, const string& storedHash);
 
 // Data Encryption (XOR cipher for PBL simplicity)
-std::string encryptData(const std::string& data, const std::string& key);
-std::string decryptData(const std::string& data, const std::string& key);
+string encryptData(const string& data, const string& key);
+string decryptData(const string& data, const string& key);
