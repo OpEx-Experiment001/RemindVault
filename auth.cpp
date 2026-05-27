@@ -1,6 +1,7 @@
 #include "auth.h"
 #include "storage.h"
 #include "json_utils.h"
+#include "crypto.h"
 #include <chrono>
 #include <iostream>
 
@@ -31,7 +32,8 @@ bool registerUser(const std::string& name, int age, const std::string& email,
     newUser["email"]      = jStr(email);
     newUser["gender"]     = jStr(gender);
     newUser["profession"] = jStr(profession);
-    newUser["password"]   = jStr(password);
+    std::string timestamp = std::to_string(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+    newUser["password"]   = jStr(hashPassword(password, timestamp));
 
     users.push_back(newUser);
     writeFile(USERS_FILE, objArrayToString(users));
@@ -45,7 +47,7 @@ std::string loginUser(const std::string& name, const std::string& password) {
     std::vector<JsonObj> users = parseObjArray(raw);
 
     for (auto& u : users) {
-        if (getStr(u, "name") == name && getStr(u, "password") == password) {
+        if (getStr(u, "name") == name && verifyPassword(password, getStr(u, "password"))) {
             std::string userId = getStr(u, "id");
             std::cout << "[Login] SUCCESS — " << name << "\n";
             return userId;
