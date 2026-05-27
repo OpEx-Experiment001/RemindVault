@@ -1,0 +1,14 @@
+# Compiled executables and binaries
+*.exe
+*.o
+*.obj
+*.dll
+*.lib
+
+# Logs and State files
+*.log
+server_state.txt
+client_state.txt
+
+# Database and sensitive data
+data/
